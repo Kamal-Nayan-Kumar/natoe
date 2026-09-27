@@ -54,6 +54,51 @@ Architecture ceiling (renderer fed the exact gold edits) scores **0.003**.
 
 ---
 
+## Calibration against the real leaderboard
+
+The local scorer is a re-implementation, so it was checked against real Kaggle
+submissions. **It is a coarse guide, not a proxy** — and on one change it
+ranked the variants in the wrong order.
+
+| fallback variant (IMPRESSION handling) | local RES | Kaggle public | Kaggle private |
+|---|---|---|---|
+| drop sentences with ≤2 tokens | 0.5695 | **0.62616** | **0.64567** |
+| keep only sentences asserting a finding | **0.5632** | 0.63136 | 0.65007 |
+| keep every sentence, truncate to 600 chars | (worse) | 0.64123 | 0.64932 |
+
+Two things to take from this:
+
+1. The local implementation reads roughly **10% optimistic** in absolute terms
+   (0.5695 local → 0.6262 real). Expect real scores about 0.06 above the local
+   figure.
+2. The local "best" variant was the real **worst**. The gap between real scores
+   here is ~0.015, which is inside the noise a re-implementation of an
+   unpublished metric should be trusted to resolve. **Validate real changes
+   against the leaderboard, not against the local number.**
+
+The full LLM pipeline measured **0.4366** local on a 40-row dev split
+(template-unedited baseline 0.6193, oracle 0.0), which would be roughly 0.49 on
+the leaderboard — but the free API tiers were throttled before it could be run
+over all 132 test rows. See *Status* below.
+
+## Status
+
+| | |
+|---|---|
+| Best leaderboard score | **0.62616** public / **0.64567** private (rule-based fallback) |
+| LLM pipeline, dev | 0.4366 (Groq `openai/gpt-oss-120b`, 0-shot) |
+| Blocking issue | free-tier rate limits: Groq gpt-oss ~50% of prompt-sized calls return 429; OpenRouter `:free` daily cap exhausted |
+
+To produce the LLM submission once quota is available:
+
+```bash
+python scripts/fill_and_submit.py --provider groq --model openai/gpt-oss-20b \
+    --n-shots 0 --passes 200 --batch 1 --pace 12 --sleep 45
+```
+
+It accumulates into `outputs/llm_cache.json`, is safe to interrupt and re-run,
+and reports exact coverage rather than silently degrading rows to the template.
+
 ## Setup
 
 ```bash
@@ -82,11 +127,28 @@ Both speak the OpenAI chat API, so one client covers both. Switch with
 Optional knobs: `LLM_MODEL`, `REASONING_EFFORT` (default `low` — this task
 does not need long chains of thought, and it is a 4× speed difference).
 
-> **Rate limits are the real constraint, not model quality.** Groq allows 1000
-> requests/hour but only **8000 prompt tokens/minute**, so few-shot prompting is
-> rationed by tokens, not calls. Budget accordingly: measure tokens-per-call
-> before choosing `n_shots`, and lean on `outputs/llm_cache.json` so repeated
-> experiments are free.
+> **Rate limits are the real constraint, not model quality.** Both free tiers
+> are rationed, and the *shape* of the limit matters:
+>
+> | limit | value | consequence |
+> |---|---|---|
+> | Groq requests | 1000 / hour | comfortable |
+> | Groq **prompt tokens** | **8000 / minute** | ~7 calls/min at 0-shot, only ~2 at 3-shot — tokens, not calls, are the budget |
+> | OpenRouter `:free` | **free-model requests per day** | a hard daily cap; adding 10 credits raises it to 1000/day |
+>
+> Practical consequences, all of which are in the code:
+> * `n_shots` is a *token* budget decision. A 3-shot prompt is ~4200 tokens.
+>   At 1 shot, 6 of 40 dev rows were rate-limited and silently fell back to
+>   the template, which is worse than not prompting at all. **Fewer shots
+>   won**, so the default is `n_shots=0`.
+> * `REASONING_EFFORT=low` by default — reasoning models otherwise spend the
+>   whole output budget on chain-of-thought and return no `content`.
+> * `workers=2` plus a `retries=2` pass over the rows that failed. A 429 storm
+>   silently drags the score back toward "template unedited", so `run_dataset`
+>   reports every row that exhausted its retries rather than swallowing it.
+> * `outputs/llm_cache.json` is keyed by
+>   `(model, reasoning_effort, guard_level, n_shots, system_prompt, prompt)`,
+>   so repeated experiments cost nothing. Failures are never cached.
 
 ### Data
 
@@ -143,11 +205,12 @@ src/natoe/
   evaluate.py    dev split, scoring, error analysis
   config.py      paths, provider table, defaults
 scripts/
-  run_dev.py       dev-split scoring + error analysis
-  predict_test.py  test predictions + submission validation
+  run_dev.py         dev-split scoring + error analysis
+  predict_test.py    test predictions + submission validation
+  fill_and_submit.py resilient cache-filling + submission (safe to re-run)
   build_notebook.py  regenerates the notebook from the modules
-  analysis/        one-off research scripts
-  fetch_data.sh    restore data/ from Kaggle
+  analysis/          one-off research scripts
+  fetch_data.sh      restore data/ from Kaggle
 notebooks/       natoe_pipeline.ipynb
 outputs/         llm_cache.json, dev_results.json, submission.csv (gitignored)
 ```

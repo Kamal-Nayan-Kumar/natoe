@@ -113,11 +113,16 @@ HARD RULES
 1. Copy the radiologist's sentences VERBATIM into the matching field. Never \
 paraphrase, never tidy grammar, never "improve" wording. Numbers, laterality \
 and severity must match the dictation exactly.
-2. Copy the radiologist's SPELLING exactly, including typos, misspellings and \
-abbreviations. Do not correct spelling errors, do not expand abbreviations, do \
-not reformat levels or measurements. In this dataset the reference reports \
-reproduce the dictation's wording verbatim, typos included, so "fixing" a typo \
-is scored as an edit.
+2. Two normalisations, and only these two. Everything else is copied as-is:
+   a) EXPAND spinal-level shorthand to the canonical hyphenated form: "c56" \
+and "c6 7" and "c5-6, c7" all become "C5-C6", "C6-C7", "C5-C6 and C6-C7". \
+Same for L3-4 -> L3-L4, T12-13 -> T12-T13. The reference reports do this in \
+87% of cases.
+   b) KEEP ordinary misspellings exactly as dictated. The reference reports \
+reproduce the dictation's spelling errors verbatim in 100% of cases, so \
+"ostearth", "andd", "dspaces" must appear in your output unchanged. Fixing a \
+spelling error is scored as an edit. Do not expand abbreviations, do not \
+reformat numbers, do not tidy grammar.
 3. Only include a field in "fields" if you are CHANGING it. Fields the \
 dictation says nothing about must be left out entirely — the renderer keeps \
 the template's original text for them.
@@ -135,9 +140,14 @@ any normal sentence that stays true and was not contradicted. Copy those kept \
 normals out of the template word for word.
 7. If the dictation explicitly negates something the template states as normal, \
 write the negated form and keep the surrounding normal wording.
-8. "impression" is a short numbered or plain list of the important abnormal \
-findings, reusing the dictation's own summary sentences verbatim. Omit it \
-(keep the template's) only if the dictation contains no abnormality at all.
+8. IMPRESSION rules, in priority order:
+   a) If the dictation describes NO abnormality (it is normal, or it only \
+contains technique/positioning notes such as "no acute traumatic process", \
+"external marker projects over", "exposure adequate"), leave the template's \
+IMPRESSION completely unchanged. Never put a technical note in the \
+IMPRESSION.
+   b) Otherwise the IMPRESSION is a short numbered or plain list of the \
+important abnormal findings, built from the dictation's own summary wording.
 9. Never add a finding, measurement, diagnosis or history that is not in the \
 dictation. Do not comment on the images yourself.
 
@@ -147,6 +157,7 @@ Template BONES field: "No acute osseous abnormality identified on this examinati
 Edited BONES field: "Mild thoracic spondylosis is present. No acute osseous \
 abnormality identified on this examination."
 The new abnormality is prepended; the still-true normal sentence is kept.
+Note the misspelling "effusuon" is left alone, per rule 2b.
 """
 
 
@@ -207,6 +218,36 @@ def _is_fatal(exc: Exception) -> bool:
                                   "reasoning_effort is not supported"))
 
 
+def _is_rate_limited(exc: Exception) -> bool:
+    return getattr(exc, "status_code", None) == 429 or \
+        "429" in str(exc) or "rate limit" in str(exc).lower()
+
+
+def _backoff(exc: Exception, attempt: int) -> float:
+    """Wait before retrying.
+
+    Rate limits get a much longer wait, because the Groq token budget
+    (8000 prompt tokens/min) needs a whole window to refill, and retrying
+    early just burns the remaining quota.
+    """
+    if not _is_rate_limited(exc):
+        return 2.0 * (2 ** attempt)
+    delay = 20.0 * (2 ** attempt)
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        hint = None
+        try:
+            hint = resp.headers.get("retry-after")
+        except Exception:                                 # noqa: BLE001
+            hint = None
+        if hint:
+            try:
+                delay = max(delay, float(hint))
+            except (TypeError, ValueError):
+                pass
+    return min(delay, 120.0)
+
+
 class LLM:
     def __init__(self, provider: str | None = None, model: str | None = None,
                  reasoning_effort: str = "low"):
@@ -226,16 +267,20 @@ class LLM:
                                      if m != self.model]
         self.reasoning_effort = (os.getenv("REASONING_EFFORT", reasoning_effort)
                                  or "").strip()
+        # A hard socket timeout matters more than a generous one: a hung
+        # request otherwise stalls a whole worker for minutes and the row
+        # ends up on the template fallback.
+        self.timeout = float(os.getenv("LLM_TIMEOUT", "90"))
         from openai import OpenAI
         self.client = OpenAI(base_url=cfg["base_url"], api_key=self.api_key,
-                             timeout=120.0, max_retries=2)
+                             timeout=self.timeout, max_retries=0)
 
     def _is_reasoning(self, model: str) -> bool:
         return any(k in model.lower() for k in REASONING_MODELS)
 
     def complete(self, prompt: str, system: str = SYSTEM_PROMPT,
-                 max_tokens: int = 2400, temperature: float = 0.0,
-                 attempts: int = 4) -> str:
+                 max_tokens: int = 1400, temperature: float = 0.0,
+                 attempts: int = 3) -> str:
         """Return raw model text.
 
         Retries the same model with exponential backoff (free tiers rate-limit
@@ -276,7 +321,7 @@ class LLM:
                         last = e
                         if _is_fatal(e):
                             break              # this model/flag combo is wrong
-                        time.sleep(2.0 * (2 ** attempt))
+                        time.sleep(_backoff(e, attempt))
                 errors.append(f"{model}[json={json_mode}]: "
                               f"{type(last).__name__}: {str(last)[:120]}")
         raise RuntimeError("all models failed -> " + " | ".join(errors[:4]))
@@ -589,12 +634,17 @@ def run_case(llm, case: dict, shots: list[dict],
 def run_dataset(llm, df: pd.DataFrame, retriever: Retriever,
                 train: pd.DataFrame, n_shots: int = 3,
                 guard_level: str = "numbers", cache_path: str | None = None,
-                progress: bool = True, workers: int = 4) -> list[str]:
+                progress: bool = True, workers: int = 2,
+                retries: int = 2) -> list[str]:
     """Predict every row. Responses are cached on disk keyed by
-    (model, guard_level, n_shots, prompt) so prompt iteration is nearly free.
+    (model, reasoning_effort, guard_level, n_shots, system_prompt, prompt) so
+    prompt iteration is nearly free.
 
-    `workers` is deliberately small: free API tiers rate-limit hard, and a 429
-    storm costs far more than the wall-clock it saves.
+    `workers` and `retries` exist because of rate limiting, not throughput.
+    Free tiers ration *prompt tokens* (Groq: 8000/min), so a burst of parallel
+    few-shot requests gets 429s and silently degrades the score to
+    "template unedited". Failing loudly and retrying slowly is worth far more
+    than raw speed here.
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -631,26 +681,36 @@ def run_dataset(llm, df: pd.DataFrame, retriever: Retriever,
 
     t0 = time.time()
     n = len(cases)
-    if workers <= 1:
-        raws = []
-        for i, p in enumerate(prompts, 1):
-            raws.append(fetch((i, p)))
-            if progress and (i % 10 == 0 or i == n):
-                _tick(i, n, t0)
-    else:
-        raws = [None] * n
+    indices = list(range(1, n + 1))
+
+    def sweep(idxs: list[int], label: str) -> None:
+        if not idxs:
+            return
+        if progress:
+            print(f"  {label}: {len(idxs)} row(s)")
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for done, raw in enumerate(
-                    pool.map(fetch, list(enumerate(prompts, 1))), 1):
-                raws[done - 1] = raw
-                if progress and (done % 10 == 0 or done == n):
-                    _tick(done, n, t0)
+            for done, raw in enumerate(pool.map(fetch, [(i, prompts[i - 1])
+                                                       for i in idxs]), 1):
+                raws[i - 1] = raw
+                if progress and (done % 10 == 0 or done == len(idxs)):
+                    _tick(done, len(idxs), t0)
+
+    sweep(indices, "pass 1")
+    for attempt in range(1, retries + 1):
+        missing = [i for i in indices if not raws[i - 1]]
+        if not missing:
+            break
+        # Failures are never cached, so a retry costs a fresh call and a
+        # second chance is always worth taking.
+        time.sleep(30.0 * attempt)
+        failures.clear()
+        sweep(missing, f"retry {attempt}")
+
     if progress:
         print()
-
     if failures:
-        print(f"  WARNING: {len(failures)} row(s) failed and fell back to the "
-              f"template. First 5:")
+        print(f"  WARNING: {len(failures)} row(s) exhausted retries and fell "
+              f"back to the template. First 5:")
         for f in failures[:5]:
             print(f"    {f}")
 

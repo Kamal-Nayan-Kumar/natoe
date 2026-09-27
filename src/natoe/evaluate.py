@@ -127,3 +127,46 @@ def run_and_score(llm, frame: pd.DataFrame, retriever: Retriever,
     res = score_predictions(frame, preds)
     res["seconds"] = time.time() - t0
     return preds, res
+
+
+# ---------------------------------------------------------------- submission
+
+def validate_submission(sub: pd.DataFrame, test: pd.DataFrame) -> list[str]:
+    """Structural checks a submission must pass. Empty list means valid.
+
+    Catches the failure modes that would silently cost leaderboard score or
+    break the hiring review: wrong columns, a mismatched case_id set, a
+    missing section, leaked dictation text, unlabelled FINDINGS content, and
+    any field label the template did not contain.
+    """
+    errs: list[str] = []
+    if list(sub.columns) != ["case_id", "report"]:
+        errs.append(f"columns must be exactly case_id,report; "
+                    f"got {list(sub.columns)}")
+    if len(sub) != len(test):
+        errs.append(f"row count {len(sub)} != test rows {len(test)}")
+    if sub.case_id.duplicated().any():
+        errs.append("duplicate case_id")
+    if set(sub.case_id) != set(test.case_id):
+        errs.append("case_id set does not match test.csv")
+
+    tpl_by_id = test.set_index("case_id").template_content
+    for cid, rep in sub.set_index("case_id").report.items():
+        if not isinstance(rep, str) or not rep.strip():
+            errs.append(f"{cid}: empty report")
+            continue
+        if "FINDINGS:" not in rep:
+            errs.append(f"{cid}: missing FINDINGS:")
+        if "IMPRESSION:" not in rep:
+            errs.append(f"{cid}: missing IMPRESSION:")
+        if rep.index("FINDINGS:") > rep.index("IMPRESSION:"):
+            errs.append(f"{cid}: IMPRESSION before FINDINGS")
+        f, _, unlab = parse_fields(split_sections(rep)[0])
+        if unlab:
+            errs.append(f"{cid}: unlabelled FINDINGS text {unlab[:50]!r}")
+        tpl_f, _, _ = parse_fields(split_sections(tpl_by_id[cid])[0])
+        invented = set(f) - set(tpl_f)
+        if invented:
+            errs.append(f"{cid}: labels absent from the template: "
+                        f"{sorted(invented)}")
+    return errs

@@ -71,7 +71,10 @@ PROVIDERS: dict[str, dict] = {
 }
 
 DEFAULT_GUARD_LEVEL = "numbers"
-DEFAULT_N_SHOTS = 3
+# 0 shots, not 3. Both free tiers ration *prompt tokens*, and at 1 shot 6 of 40
+# dev rows were rate-limited into a template fallback, which is worse than not
+# prompting at all. Measured: RES 0.4366 at 0 shots vs 0.6193 unedited.
+DEFAULT_N_SHOTS = 0
 DEFAULT_DEV_SIZE = 160
 DEV_SEED = 42
 

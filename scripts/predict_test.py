@@ -23,42 +23,8 @@ import pandas as pd
 from natoe.config import (CACHE_PATH, DEFAULT_GUARD_LEVEL, DEFAULT_N_SHOTS,
                           OUTPUT_DIR, TEST_CSV, TRAIN_CSV, have_key,
                           provider_name)
-from natoe.evaluate import build_retriever, run_and_score
-from natoe.pipeline import LLM, MockLLM, Retriever
-from natoe.res_scorer import parse_fields, split_sections
-
-
-def validate(sub: pd.DataFrame, test: pd.DataFrame) -> list[str]:
-    """Return a list of problems; empty means the submission is valid."""
-    errs: list[str] = []
-    if list(sub.columns) != ["case_id", "report"]:
-        errs.append(f"columns must be exactly case_id,report; got {list(sub.columns)}")
-    if len(sub) != len(test):
-        errs.append(f"row count {len(sub)} != test rows {len(test)}")
-    if sub.case_id.duplicated().any():
-        errs.append("duplicate case_id")
-    if set(sub.case_id) != set(test.case_id):
-        errs.append("case_id set does not match test.csv")
-
-    tpl_by_id = test.set_index("case_id").template_content
-    for cid, rep in sub.set_index("case_id").report.items():
-        if not isinstance(rep, str) or not rep.strip():
-            errs.append(f"{cid}: empty report")
-            continue
-        if "FINDINGS:" not in rep:
-            errs.append(f"{cid}: missing FINDINGS:")
-        if "IMPRESSION:" not in rep:
-            errs.append(f"{cid}: missing IMPRESSION:")
-        if rep.index("FINDINGS:") > rep.index("IMPRESSION:"):
-            errs.append(f"{cid}: IMPRESSION before FINDINGS")
-        f, _, unlab = parse_fields(split_sections(rep)[0])
-        if unlab:
-            errs.append(f"{cid}: unlabelled FINDINGS text {unlab[:50]!r}")
-        tpl_f, _, _ = parse_fields(split_sections(tpl_by_id[cid])[0])
-        invented = set(f) - set(tpl_f)
-        if invented:
-            errs.append(f"{cid}: labels absent from the template: {sorted(invented)}")
-    return errs
+from natoe.evaluate import build_retriever, run_and_score, validate_submission
+from natoe.pipeline import LLM, MockLLM
 
 
 def main() -> int:
@@ -68,8 +34,6 @@ def main() -> int:
     ap.add_argument("--n-shots", type=int, default=DEFAULT_N_SHOTS)
     ap.add_argument("--guard", default=DEFAULT_GUARD_LEVEL,
                     choices=["off", "numbers", "strict"])
-    ap.add_argument("--use-all-train", action="store_true", default=True,
-                    help="allow every train row as a few-shot exemplar (default)")
     ap.add_argument("--out", default=str(OUTPUT_DIR / "submission.csv"))
     args = ap.parse_args()
 
@@ -96,7 +60,7 @@ def main() -> int:
                              guard_level=args.guard, cache_path=CACHE_PATH)
 
     sub = pd.DataFrame({"case_id": test.case_id, "report": preds})
-    errs = validate(sub, test)
+    errs = validate_submission(sub, test)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
