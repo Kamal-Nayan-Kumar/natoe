@@ -20,16 +20,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pandas as pd
 
-from natoe.config import (CACHE_PATH, DEFAULT_GUARD_LEVEL, DEFAULT_N_SHOTS,
+from natoe.config import (CACHE_PATH, DEFAULT_GUARD_LEVEL, DEFAULT_N_SHOTS, PROVIDERS,
                           OUTPUT_DIR, TEST_CSV, TRAIN_CSV, have_key,
                           provider_name)
-from natoe.evaluate import build_retriever, run_and_score, validate_submission
-from natoe.pipeline import LLM, MockLLM
+from natoe.evaluate import build_retriever, validate_submission
+from natoe.pipeline import LLM, MockLLM, run_dataset
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--provider", default=None, choices=["groq", "openrouter"])
+    ap.add_argument("--provider", default=None, choices=sorted(PROVIDERS))
     ap.add_argument("--model", default=None)
     ap.add_argument("--n-shots", type=int, default=DEFAULT_N_SHOTS)
     ap.add_argument("--guard", default=DEFAULT_GUARD_LEVEL,
@@ -56,8 +56,10 @@ def main() -> int:
     print(f"config   : n_shots={args.n_shots}  guard={args.guard}")
     print(f"test rows: {len(test)}\n")
 
-    preds, _ = run_and_score(llm, test, retriever, train, n_shots=args.n_shots,
-                             guard_level=args.guard, cache_path=CACHE_PATH)
+    # test.csv has no `report` column, so it cannot be scored -- call
+    # run_dataset directly rather than run_and_score.
+    preds = run_dataset(llm, test, retriever, train, n_shots=args.n_shots,
+                        guard_level=args.guard, cache_path=CACHE_PATH)
 
     sub = pd.DataFrame({"case_id": test.case_id, "report": preds})
     errs = validate_submission(sub, test)

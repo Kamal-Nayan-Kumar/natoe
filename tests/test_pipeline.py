@@ -292,6 +292,46 @@ def test_gold_patch_renders_to_near_zero():
     assert score_predictions(train, outs)["RES"] < 0.05
 
 
+def test_run_dataset_end_to_end_with_mock():
+    """Covers run_dataset's threading/retry path with no API key needed."""
+    from natoe.evaluate import dev_split
+    from natoe.pipeline import run_dataset
+
+    train = pd.read_csv(TRAIN_CSV).head(40)
+    dev, pool = dev_split(train, n_dev=6)
+    retriever = Retriever((pool.body_part + " " + pool.template_content).tolist())
+    outs = run_dataset(MockLLM(), dev, retriever, pool, n_shots=1,
+                       guard_level="numbers", progress=False, workers=2)
+    assert len(outs) == len(dev)
+    for out in outs:
+        assert out.startswith("FINDINGS:")
+        assert "IMPRESSION:" in out
+    assert score_predictions(dev, outs)["RES"] >= 0.0
+
+
+@pytest.mark.skipif(not TRAIN_CSV.exists(), reason="train.csv not present")
+def test_run_dataset_survives_a_dead_llm():
+    """A total API failure must degrade to the template, not crash."""
+    from natoe.evaluate import dev_split
+    from natoe.pipeline import run_dataset
+
+    class Dead:
+        model, reasoning_effort = "dead", "low"
+        provider = "dead"
+
+        def complete(self, *a, **k):
+            raise RuntimeError("boom")
+
+    train = pd.read_csv(TRAIN_CSV).head(30)
+    dev, pool = dev_split(train, n_dev=4)
+    retriever = Retriever((pool.body_part + " " + pool.template_content).tolist())
+    outs = run_dataset(Dead(), dev, retriever, pool, n_shots=0, progress=False,
+                       workers=1, retries=0)
+    assert len(outs) == len(dev)
+    for out, (_, r) in zip(outs, dev.iterrows()):
+        assert out.startswith("FINDINGS:")
+
+
 @pytest.mark.skipif(not TRAIN_CSV.exists(), reason="train.csv not present")
 def test_baselines_are_ordered():
     train = pd.read_csv(TRAIN_CSV)

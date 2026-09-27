@@ -55,6 +55,27 @@ PROVIDERS: dict[str, dict] = {
             "qwen/qwen3.8-27b",
         ],
     },
+    "opencode": {
+        "base_url": "https://opencode.ai/zen/v1",
+        "key_env": "OPENCODE_API_KEY",
+        # NOTE: Zen model ids carry NO "opencode/" prefix on the wire.
+        #
+        # Verified 2026-09-27 against this account:
+        #   * Paid ids (gpt-5.5, claude-sonnet-5, gemini-3.8-flash, ...) return
+        #     402 "Insufficient account balance" -- the key is valid but the
+        #     account has no credits.
+        #   * The `-free` ids return 403 "OpenCode's free tier can only be used
+        #     from within OpenCode", so they are not callable from a script.
+        #   * `space-bunny-free` is the exception and does work from a script.
+        # Set LLM_MODEL to any paid id once the account has credits.
+        "default_model": "space-bunny-free",
+        "fallbacks": [
+            "space-bunny-free",
+            "muse-spark-1.3-contributor-free",
+            "nemotron-3-ultra-free",
+            "big-pickle",
+        ],
+    },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "key_env": "OPENROUTER_API_KEY",

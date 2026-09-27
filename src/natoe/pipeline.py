@@ -203,7 +203,8 @@ def clip(text: str, n: int = MAX_CHARS_TEMPLATE) -> str:
 
 # Reasoning models burn most of their output budget on chain-of-thought. For
 # this task the reasoning is not the bottleneck, so keep it minimal.
-REASONING_MODELS = ("gpt-oss", "nemotron", "qwen3")
+REASONING_MODELS = ("gpt-oss", "nemotron", "qwen3", "space-bunny", "big-pickle",
+                    "muse-spark", "mimo", "longcat")
 
 
 def _is_fatal(exc: Exception) -> bool:
@@ -279,7 +280,7 @@ class LLM:
         return any(k in model.lower() for k in REASONING_MODELS)
 
     def complete(self, prompt: str, system: str = SYSTEM_PROMPT,
-                 max_tokens: int = 1400, temperature: float = 0.0,
+                 max_tokens: int = 2000, temperature: float = 0.0,
                  attempts: int = 3) -> str:
         """Return raw model text.
 
@@ -310,13 +311,23 @@ class LLM:
                         msg = self.client.chat.completions.create(
                             **kw).choices[0].message
                         content = (getattr(msg, "content", None) or "").strip()
-                        if content:
+                        if content and parse_json_safe(content) is not None:
                             return content
-                        reasoning = (getattr(msg, "reasoning", None) or "").strip()
-                        if reasoning:
-                            return _last_json_object(reasoning) or reasoning
+                        # Reasoning models put the chain of thought in one of
+                        # two fields depending on the gateway. If the content
+                        # is empty or truncated mid-object, salvage the JSON
+                        # out of the reasoning trace instead of giving up.
+                        for attr in ("reasoning_content", "reasoning"):
+                            blob = (getattr(msg, attr, None) or "").strip()
+                            if not blob:
+                                continue
+                            salvaged = _last_json_object(blob)
+                            if salvaged and parse_json_safe(salvaged) is not None:
+                                return salvaged
+                        if content:
+                            return content          # let the caller report it
                         last = RuntimeError("empty content and reasoning")
-                        break              # nothing to retry
+                        break                      # nothing to retry
                     except Exception as e:       # noqa: BLE001
                         last = e
                         if _is_fatal(e):
@@ -355,6 +366,14 @@ def _last_json_object(text: str) -> str | None:
     return best
 
 
+def parse_json_safe(txt: str):
+    """parse_json that returns None instead of raising."""
+    try:
+        return parse_json(txt)
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
 class MockLLM:
     """Offline stand-in so the notebook can be smoke-tested without a key.
 
@@ -365,6 +384,7 @@ class MockLLM:
 
     provider, cfg, api_key = "mock", {}, ""
     model, chain = "mock", ["mock"]
+    reasoning_effort = ""      # MockLLM must quack like LLM for the cache key
 
     @staticmethod
     def _keys(label: str) -> set[str]:
@@ -682,6 +702,7 @@ def run_dataset(llm, df: pd.DataFrame, retriever: Retriever,
     t0 = time.time()
     n = len(cases)
     indices = list(range(1, n + 1))
+    raws: list[str | None] = [None] * n
 
     def sweep(idxs: list[int], label: str) -> None:
         if not idxs:
@@ -689,8 +710,9 @@ def run_dataset(llm, df: pd.DataFrame, retriever: Retriever,
         if progress:
             print(f"  {label}: {len(idxs)} row(s)")
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for done, raw in enumerate(pool.map(fetch, [(i, prompts[i - 1])
-                                                       for i in idxs]), 1):
+            # pool.map preserves input order, so zipping back onto idxs is safe.
+            results = pool.map(fetch, [(i, prompts[i - 1]) for i in idxs])
+            for done, (i, raw) in enumerate(zip(idxs, results), 1):
                 raws[i - 1] = raw
                 if progress and (done % 10 == 0 or done == len(idxs)):
                     _tick(done, len(idxs), t0)

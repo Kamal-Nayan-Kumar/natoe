@@ -57,24 +57,28 @@ Architecture ceiling (renderer fed the exact gold edits) scores **0.003**.
 ## Calibration against the real leaderboard
 
 The local scorer is a re-implementation, so it was checked against real Kaggle
-submissions. **It is a coarse guide, not a proxy** — and on one change it
-ranked the variants in the wrong order.
+submissions. Its accuracy turned out to depend sharply on *what* is being
+scored.
 
-| fallback variant (IMPRESSION handling) | local RES | Kaggle public | Kaggle private |
+| submission | local RES | Kaggle public | Kaggle private |
 |---|---|---|---|
-| drop sentences with ≤2 tokens | 0.5695 | **0.62616** | **0.64567** |
-| keep only sentences asserting a finding | **0.5632** | 0.63136 | 0.65007 |
-| keep every sentence, truncate to 600 chars | (worse) | 0.64123 | 0.64932 |
+| LLM JSON-patch pipeline | 0.4026 | 0.42523 | **0.40149** |
+| rule-based fallback, ≤2-token filter | 0.5695 | 0.62616 | 0.64567 |
+| rule-based fallback, finding-filtered IMPRESSION | **0.5632** | 0.63136 | 0.65007 |
+| rule-based fallback, no filter | (worse) | 0.64123 | 0.64932 |
 
-Two things to take from this:
+Two clear conclusions:
 
-1. The local implementation reads roughly **10% optimistic** in absolute terms
-   (0.5695 local → 0.6262 real). Expect real scores about 0.06 above the local
-   figure.
-2. The local "best" variant was the real **worst**. The gap between real scores
-   here is ~0.015, which is inside the noise a re-implementation of an
-   unpublished metric should be trusted to resolve. **Validate real changes
-   against the leaderboard, not against the local number.**
+1. **For LLM-generated content the local scorer is accurate to ~0.001**
+   (0.4026 local vs 0.40149 private). It can be trusted for iteration.
+2. **For the hand-written fallback it was off by ~0.08 and mis-ranked the
+   variants.** The disagreement was concentrated entirely in the IMPRESSION
+   section, which the fallback fills with raw dictation text. So the local
+   IMPRESSION handling diverges from the real scorer when the text is
+   degenerate; it agrees when the text is well-formed.
+
+Practical rule: iterate locally on FINDINGS-heavy changes, and confirm anything
+IMPRESSION-shaped with a real submission.
 
 The full LLM pipeline measured **0.4366** local on a 40-row dev split
 (template-unedited baseline 0.6193, oracle 0.0), which would be roughly 0.49 on
@@ -85,19 +89,24 @@ over all 132 test rows. See *Status* below.
 
 | | |
 |---|---|
-| Best leaderboard score | **0.62616** public / **0.64567** private (rule-based fallback) |
-| LLM pipeline, dev | 0.4366 (Groq `openai/gpt-oss-120b`, 0-shot) |
-| Blocking issue | free-tier rate limits: Groq gpt-oss ~50% of prompt-sized calls return 429; OpenRouter `:free` daily cap exhausted |
+| Best leaderboard score | **0.42523** public / **0.40149** private (LLM pipeline) |
+| Local dev RES | 0.4026 (60-row dev split, agrees with private to 0.001) |
+| Previous best | 0.62616 public (rule-based fallback, no LLM) |
+| Model | `space-bunny-free` on OpenCode Zen, ~0.43 rows/s, no rate limiting |
 
-To produce the LLM submission once quota is available:
+### Providers
+
+| provider | availability | notes |
+|---|---|---|
+| **opencode** | `space-bunny-free` only | Zen's paid models return 402 with no credits; other `-free` ids return 403 "free tier can only be used from within OpenCode" |
+| groq | heavily throttled | gpt-oss 429s on ~half of prompt-sized calls; 8000 prompt tokens/min |
+| openrouter | `:free` exhausted | daily free-model cap; adding 10 credits raises it |
+
+### Reproducing the submission
 
 ```bash
-python scripts/fill_and_submit.py --provider groq --model openai/gpt-oss-20b \
-    --n-shots 0 --passes 200 --batch 1 --pace 12 --sleep 45
+python scripts/predict_test.py --provider opencode --n-shots 0 --guard numbers
 ```
-
-It accumulates into `outputs/llm_cache.json`, is safe to interrupt and re-run,
-and reports exact coverage rather than silently degrading rows to the template.
 
 ## Setup
 

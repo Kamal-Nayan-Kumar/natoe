@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pandas as pd
 
-from natoe.config import (CACHE_PATH, DEFAULT_GUARD_LEVEL, DEFAULT_N_SHOTS,
+from natoe.config import (CACHE_PATH, DEFAULT_GUARD_LEVEL, DEFAULT_N_SHOTS, PROVIDERS,
                           OUTPUT_DIR, TEST_CSV, TRAIN_CSV, have_key,
                           provider_name)
 from natoe.evaluate import build_retriever, validate_submission
@@ -132,7 +132,7 @@ def fallback_patch(case: dict) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--provider", default=None, choices=["groq", "openrouter"])
+    ap.add_argument("--provider", default=None, choices=sorted(PROVIDERS))
     ap.add_argument("--model", default=None)
     ap.add_argument("--n-shots", type=int, default=DEFAULT_N_SHOTS)
     ap.add_argument("--guard", default=DEFAULT_GUARD_LEVEL)

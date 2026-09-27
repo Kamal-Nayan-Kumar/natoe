@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pandas as pd
 
-from natoe.config import (CACHE_PATH, DEFAULT_DEV_SIZE, DEFAULT_GUARD_LEVEL,
+from natoe.config import (CACHE_PATH, DEFAULT_DEV_SIZE, DEFAULT_GUARD_LEVEL, PROVIDERS,
                           DEFAULT_N_SHOTS, OUTPUT_DIR, TRAIN_CSV, have_key,
                           model_name, provider_name)
 from natoe.evaluate import (baselines, build_retriever, dev_split,
@@ -37,7 +37,7 @@ def get_llm(provider: str | None, model: str | None):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--provider", default=None, choices=["groq", "openrouter"])
+    ap.add_argument("--provider", default=None, choices=sorted(PROVIDERS))
     ap.add_argument("--model", default=None)
     ap.add_argument("--n-dev", type=int, default=DEFAULT_DEV_SIZE)
     ap.add_argument("--n-shots", type=int, default=DEFAULT_N_SHOTS)
