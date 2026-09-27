@@ -1,0 +1,32 @@
+# --- secrets: never commit ---
+.env
+kaggle.json
+*.pem
+secrets/
+
+# --- python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- notebooks ---
+.ipynb_checkpoints/
+
+# --- run artefacts ---
+outputs/*
+!outputs/.gitkeep
+*.log
+
+# --- data: the CSVs are competition data, restore with scripts/fetch_data.sh ---
+data/*.csv
+
+# --- os ---
+.DS_Store
+Thumbs.db

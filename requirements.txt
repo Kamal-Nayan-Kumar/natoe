@@ -1,0 +1,19 @@
+# Runtime dependencies for the Natoe radiology report-editing pipeline.
+# Python 3.10+ (developed on 3.12).
+
+# --- core ---
+pandas>=2.0,<3.0
+numpy>=1.24
+
+# --- LLM providers (both speak the OpenAI chat API) ---
+openai>=1.40
+python-dotenv>=1.0
+
+# --- notebook ---
+notebook>=7.0
+ipykernel>=6.29
+nbformat>=5.9
+nbconvert>=7.0
+
+# --- submission (optional, only for `kaggle competitions submit`) ---
+# kaggle>=1.6
