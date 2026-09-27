@@ -58,10 +58,13 @@ PROVIDERS: dict[str, dict] = {
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "key_env": "OPENROUTER_API_KEY",
-        "default_model": "google/gemma-4-31b-it:free",
+        # Verified on the OpenRouter :free catalogue. nemotron-3-super is the
+        # default because it is the only free model that honours JSON mode and
+        # answers in well under a second; gemma-4-31b:free frequently 429s.
+        "default_model": "nvidia/nemotron-3-super-120b-a12b:free",
         "fallbacks": [
-            "google/gemma-4-31b-it:free",
             "nvidia/nemotron-3-super-120b-a12b:free",
+            "google/gemma-4-31b-it:free",
             "qwen/qwen3.8-27b:free",
         ],
     },

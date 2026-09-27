@@ -71,16 +71,22 @@ Keys live in `.env`, never in code and never in the notebook.
 cp .env.example .env     # then fill in
 ```
 
-| provider | key | default model |
-|---|---|---|
-| Groq (primary) | `GROQ_API_KEY` | `openai/gpt-oss-120b` |
-| OpenRouter | `OPENROUTER_API_KEY` | `google/gemma-4-31b-it:free` |
+| provider | key | default model | notes |
+|---|---|---|---|
+| Groq | `GROQ_API_KEY` | `openai/gpt-oss-120b` | strongest, but **8000 prompt tokens/min** — a 3-shot prompt (~4200 tok) means ~2 calls/min |
+| OpenRouter | `OPENROUTER_API_KEY` | `nvidia/nemotron-3-super-120b:free` | free, ~0.6 s/call, honours JSON mode; gemma-4-31b:free frequently 429s |
 
 Both speak the OpenAI chat API, so one client covers both. Switch with
 `LLM_PROVIDER=openrouter` (or `--provider openrouter`).
 
 Optional knobs: `LLM_MODEL`, `REASONING_EFFORT` (default `low` — this task
 does not need long chains of thought, and it is a 4× speed difference).
+
+> **Rate limits are the real constraint, not model quality.** Groq allows 1000
+> requests/hour but only **8000 prompt tokens/minute**, so few-shot prompting is
+> rationed by tokens, not calls. Budget accordingly: measure tokens-per-call
+> before choosing `n_shots`, and lean on `outputs/llm_cache.json` so repeated
+> experiments are free.
 
 ### Data
 

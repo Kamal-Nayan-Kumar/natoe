@@ -10,7 +10,7 @@ drifting apart.
     python scripts/build_notebook.py
 """
 from pathlib import Path
-import sys
+
 
 import nbformat as nbf
 
@@ -379,11 +379,12 @@ print("exemplars never include the row being scored, so the dev number is honest
 
 RETRIEVER = build_retriever(POOL)
 _probe = dict(DEV.iloc[0])
-print(f"\nprobe case: {C if False else _probe['body_part']} / "
-      f"{_probe['modality']} | {_probe['study_description']}")
-for i in RETRIEVER.query(retrieval_probe := (
-        f"{_probe['body_part']} {_probe['modality']} {_probe['study_description']} "
-        f"{_probe['template_content']} {_probe['dictation']}"), top_k=3):
+_probe_query = (f"{_probe['body_part']} {_probe['modality']} "
+                f"{_probe['study_description']} {_probe['template_content']} "
+                f"{_probe['dictation']}")
+print(f"\nprobe case: {_probe['body_part']} / {_probe['modality']} | "
+      f"{_probe['study_description']}")
+for i in RETRIEVER.query(_probe_query, top_k=3):
     print(f"  -> {POOL.body_part[i]:14s} {POOL.modality[i]:5s} | "
           f"{str(POOL.dictation[i])[:70]!r}")
 """)
@@ -680,7 +681,3 @@ nb["metadata"] = {
 OUT.parent.mkdir(parents=True, exist_ok=True)
 nbf.write(nb, str(OUT))
 print(f"wrote {OUT.relative_to(ROOT)}  ({len(cells)} cells)")
-
-if __name__ == "__main__" and "--execute" in sys.argv:
-    import nbconvert
-    nbconvert.execute_notebook = getattr(nbconvert, "execute_notebook", None)

@@ -113,24 +113,32 @@ HARD RULES
 1. Copy the radiologist's sentences VERBATIM into the matching field. Never \
 paraphrase, never tidy grammar, never "improve" wording. Numbers, laterality \
 and severity must match the dictation exactly.
-2. Only include a field in "fields" if you are CHANGING it. Fields the \
+2. Copy the radiologist's SPELLING exactly, including typos, misspellings and \
+abbreviations. Do not correct spelling errors, do not expand abbreviations, do \
+not reformat levels or measurements. In this dataset the reference reports \
+reproduce the dictation's wording verbatim, typos included, so "fixing" a typo \
+is scored as an edit.
+3. Only include a field in "fields" if you are CHANGING it. Fields the \
 dictation says nothing about must be left out entirely — the renderer keeps \
 the template's original text for them.
-3. Use ONLY the field labels that appear in the template, spelled exactly as \
+4. Use ONLY the field labels that appear in the template, spelled exactly as \
 they appear (including slashes and spaces). Never invent a new field.
-4. Route each finding to the field that owns that anatomy. An opacity goes in \
-a lung field, an effusion in a pleural field, a fracture in a bone field. If \
-the template has an "OTHER FINDINGS" field, use it only for findings that \
-belong nowhere else.
-5. When a field is abnormal, DELETE the template's contradicting normal \
+5. Route each finding to the field that owns that anatomy, and route it to \
+exactly ONE field. An opacity goes in a lung field, an effusion in a pleural \
+field, degenerative change in a bone or disc field, a fracture in a bone \
+field. If the template has an "OTHER FINDINGS" field, use it only for \
+findings that belong nowhere else. Getting this wrong is the single most \
+expensive mistake you can make.
+6. When a field is abnormal, DELETE the template's contradicting normal \
 sentence (e.g. do not keep "The lungs are clear" next to an opacity) but KEEP \
-any normal sentence that stays true and was not contradicted.
-6. If the dictation explicitly negates something the template states as normal, \
+any normal sentence that stays true and was not contradicted. Copy those kept \
+normals out of the template word for word.
+7. If the dictation explicitly negates something the template states as normal, \
 write the negated form and keep the surrounding normal wording.
-7. "impression" is a short numbered or plain list of the important abnormal \
+8. "impression" is a short numbered or plain list of the important abnormal \
 findings, reusing the dictation's own summary sentences verbatim. Omit it \
 (keep the template's) only if the dictation contains no abnormality at all.
-8. Never add a finding, measurement, diagnosis or history that is not in the \
+9. Never add a finding, measurement, diagnosis or history that is not in the \
 dictation. Do not comment on the images yourself.
 
 EXAMPLE OF THE REQUIRED EDIT STYLE
@@ -607,7 +615,10 @@ def run_dataset(llm, df: pd.DataFrame, retriever: Retriever,
 
     def fetch(args):
         i, prompt = args
-        ck = Cache.key(llm.model, guard_level, n_shots, prompt)
+        # The system prompt MUST be part of the key: otherwise editing the
+        # prompt rules would silently reuse every stale cached response.
+        ck = Cache.key(llm.model, llm.reasoning_effort, guard_level, n_shots,
+                       SYSTEM_PROMPT, prompt)
         raw = cache.get(ck)
         if raw is None:
             try:
