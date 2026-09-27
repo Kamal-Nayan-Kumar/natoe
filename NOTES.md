@@ -386,36 +386,91 @@ Generalisable lesson: a selection rule tuned against one generator can invert
 once that generator is fixed. Re-measure the selector after changing the thing
 it was selecting over.
 
-### The noise floor — why further prompt tweaking is pointless
+### The noise floor — and the 60-row dev split was optimistic
 
 Adding `temperature` to the response-cache key (a correctness fix) invalidated
-the cache, so the *identical* config was regenerated from scratch:
+the cache, so the *identical* config was regenerated from scratch on the
+60-row split: 0.2842 then 0.2956. **Δ = 0.011 for the same prompt, model and
+temperature**, with only 9–12 of 60 responses byte-identical — matching an
+independently measured 0.009–0.019 band.
 
-| run of the same config | local RES |
-|---|---|
-| first generation | 0.2842 |
-| second generation | **0.2956** |
+**The 300-row dev split puts the true level higher than the 60-row one:**
 
-**Δ = 0.011 for the same prompt, same model, same temperature.** That matches
-the independently measured 0.009–0.019 noise band for a fixed config. Only
-9–12 of 60 responses were byte-identical between the two runs.
+| dev split | rows | local RES | F | I |
+|---|---|---|---|---|
+| dev-60 | 60 | 0.2842 / 0.2956 (two draws) | 0.258 | 0.366 |
+| **dev-300** | 300 | **0.3097** | **0.2673** | **0.3884** |
 
-**Consequence: any local improvement smaller than ~0.02 is unmeasurable on a
-60-row dev split.** Three recent changes fall inside that band and are recorded
-as no-gain, not as wins:
+So the 60-row split read ~0.015–0.025 optimistic, and the leaderboard score of
+0.33012 came from a correspondingly lucky draw. **All further A/B testing uses
+the 300-row split**, where the noise floor is ~0.005 and a 0.02 change is
+genuinely resolvable.
 
-| change | local RES | verdict |
+Three changes that were inside the 60-row noise band and are recorded as
+no-gain rather than shipped: the facet-arthropathy routing rule (0.3004),
+4 shots (0.2989), 5 shots (0.2936).
+
+### Structural fact: untouched fields are free, changed fields are everything
+
+From the field-content analysis pass, on 3283 gold fields / 6869 gold
+sentences:
+
+* **65.6% of fields differ from the template, but they are only 28.4% of total
+  metric weight** (weight 3 vs 1). The average row is mostly "leave it alone".
+* **Unchanged fields are reproduced at cost 0.0000 under the copy oracle.**
+  Every scrap of copy-oracle loss is on changed fields (mean 0.225). So *any*
+  edit to a field the dictation does not speak to is pure downside.
+* 3,331 template sentences inside changed fields: **59.3% DELETED, 20.7%
+  modified, 20.0% survived verbatim.** For a *contradicted* normal specifically,
+  gold deletes it **90.1%** of the time.
+* Replacing a field's template sentences rather than keeping them costs
+  **0.02–0.04** in every deterministic configuration tested.
+
+Decomposition of the 0.4010 gap from template-verbatim to the copy oracle:
+
+| mechanism | F cost | share |
 |---|---|---|
-| validated config (3-shot, liberal prompt) | 0.2842 / 0.2956 | baseline |
-| + facet-arthropathy routing rule in the prompt | 0.3004 | no gain — reverted |
-| 4 shots | 0.2989 | no gain |
-| 5 shots | 0.2936 | no gain |
+| which dictation sentence goes to which field | 0.1906 | 47.5% |
+| which subset, in which order, inside a field | 0.2104 | 52.5% |
+| text that cannot be copied at all | 0.1736 | (floor) |
 
-A 60-row split cannot resolve these, and neither can 132 test rows. Shipping
-any of them would be selecting on noise — the same overfitting trap that the
-local-vs-real disagreement already demonstrated once.
+Two corollaries that changed the plan:
+
+* **"Should I edit this field at all" is worth only +0.004 RES.** Handing a
+  policy the gold field set changes nothing measurable. The value is entirely
+  in *per-sentence assignment*, not per-field gating. Effort spent on
+  deciding *whether* to touch a field is wasted.
+* **The "new text" contains no new information.** 99.8% of the tokens in gold
+  sentences absent from both sources already occur somewhere in the dictation,
+  and 54.4% are within 2 tokens of a source sentence. The differences are
+  formulaic: topic-subject drop, light-verb frame ("is present", "are noted",
+  "is seen"), and "remaining/otherwise" hedges. So the gap is segmentation,
+  framing and picking — not vocabulary.
 
 ### Things that were tried and did not work
+
+**Four consecutive prompt changes failed, and a deterministic rule that helps
+in one setting hurts in the other.**
+
+| change | dev-300 RES | vs baseline | verdict |
+|---|---|---|---|
+| **baseline** (3-shot, liberal prompt, N=1, guard=numbers) | **0.3097** | — | shipped |
+| + "never replace template sentences, always prepend" | 0.3196 | **+0.010 worse** | reverted |
+| + facet-arthropathy routing rule | 0.3004 (dev-60) | no gain | reverted |
+| 4 shots | 0.2989 (dev-60) | no gain | dropped |
+| 5 shots | 0.2936 (dev-60) | no gain | dropped |
+| best-of-N, N=4, aggressiveness selector | 0.3040 (dev-60) | **+0.020 worse** | dropped |
+| router as copy-assembler (best hybrid) | 0.4176 (dev-60) | +0.086 worse | dropped |
+
+The "never replace" rule is the interesting failure. The field-content analysis
+**measured it as worth 0.02–0.04 in every deterministic configuration** — and it
+is genuinely true that unchanged fields cost 0.0000 under the oracle. But
+instructing the model to "never replace" makes it retain contradicted normals
+beside abnormalities, and that costs more than the rule gains. The deterministic
+and generative settings want opposite instructions here.
+
+That is now four independent confirmations that the prompt is at a local
+optimum. Continuing to tune it is selecting on noise.
 
 * **Every content-based proxy failed.** Dictation coverage, sentence drop rate,
   unsupported content, verbatim-copy fraction, cross-candidate consensus — all
