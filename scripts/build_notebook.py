@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "src" / "natoe"
 OUT = ROOT / "notebooks" / "natoe_pipeline.ipynb"
 
-MODULES = ["res_scorer.py", "pipeline.py", "config.py", "evaluate.py"]
+MODULES = ["res_scorer.py", "pipeline.py", "config.py", "evaluate.py",
+           "impression.py"]
 
 nb = nbf.v4.new_notebook()
 cells: list = []
@@ -115,6 +116,7 @@ section rewrites them onto disk and imports them.
 | `pipeline.py` | retriever, prompt, JSON patch, guard, renderer |
 | `config.py` | paths, provider table, defaults |
 | `evaluate.py` | dev split, scoring, error analysis |
+| `impression.py` | IMPRESSION strategy (35% of the metric) |
 """)
 
 for name in MODULES:
@@ -125,7 +127,7 @@ import importlib, sys
 from pathlib import Path
 
 sys.path.insert(0, "src")
-for m in ("natoe", "natoe.res_scorer", "natoe.config",
+for m in ("natoe", "natoe.res_scorer", "natoe.config", "natoe.impression",
           "natoe.pipeline", "natoe.evaluate"):
     if m in sys.modules:
         importlib.reload(sys.modules[m])

@@ -57,6 +57,30 @@ _SIGNED_NUM = re.compile(r"^[+-]\d")
 _PUNCT = re.compile(r"[^\w\s+/-]|(?<=\w)/|/(?=\w)")
 
 
+def split_sentences(text: str) -> list[str]:
+    """Split into sentences line by line, keeping list markers glued.
+
+    A leading marker ("1. ", "2) ", "- ") stays attached to its first sentence.
+    Without this, "1. Mild spondylosis." splits into ["1.", "Mild spondylosis."]
+    and any downstream rejoin reflows the text -- which silently corrupts both
+    the IMPRESSION and the guard's sentence-level filtering.
+    """
+    out: list[str] = []
+    for line in (text or "").split("\n"):
+        line = re.sub(r"\s+", " ", line).strip()
+        if not line:
+            continue
+        head = ""
+        m = _LIST_MARKER.match(line)
+        if m:
+            head, line = m.group(0), line[m.end():]
+        parts = [p.strip() for p in
+                 re.split(r"(?<=[.;:])\s+(?=[A-Z0-9(\"'])", line) if p.strip()]
+        for i, p in enumerate(parts):
+            out.append(head + p if i == 0 else p)
+    return out
+
+
 def normalize(text: str) -> str:
     """Lowercase, unicode-normalise, standardise units, strip list markers."""
     if not isinstance(text, str):

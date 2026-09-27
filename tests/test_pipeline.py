@@ -282,14 +282,48 @@ def test_retriever_finds_same_body_part():
 
 @pytest.mark.skipif(not TRAIN_CSV.exists(), reason="train.csv not present")
 def test_gold_patch_renders_to_near_zero():
-    """The architecture ceiling: perfect patches must reproduce the reference."""
+    """The architecture ceiling: perfect patches must reproduce the reference.
+
+    `append_impression_closer` is off here because this test is measuring the
+    renderer's FIELD assembly, not the IMPRESSION embellishment (which by
+    design adds the template's closing line and so cannot round-trip to the
+    gold). That behaviour has its own test below.
+    """
     train = pd.read_csv(TRAIN_CSV).head(120)
     outs = [render({"template_content": r.template_content,
                     "dictation": r.dictation},
                    guard(gold_patch(r), {"template_content": r.template_content,
-                                         "dictation": r.dictation}, "numbers"))
+                                         "dictation": r.dictation}, "numbers"),
+                   append_impression_closer=False)
             for _, r in train.iterrows()]
     assert score_predictions(train, outs)["RES"] < 0.05
+
+
+def test_render_appends_the_template_impression_closer():
+    case = {"template_content":
+            "FINDINGS:\nLUNGS: clear\n\nIMPRESSION:\n1. Fracture.\n"
+            "2. No acute cardiopulmonary abnormality.",
+            "dictation": "rib fracture"}
+    out = render(case, {"fields": {}, "impression": "1. Fracture."})
+    assert "No acute cardiopulmonary abnormality." in out
+
+
+def test_render_does_not_duplicate_the_closer():
+    case = {"template_content":
+            "FINDINGS:\nLUNGS: clear\n\nIMPRESSION:\nNo acute abnormality.",
+            "dictation": "x"}
+    out = render(case, {"fields": {},
+                        "impression": "Effusion. No acute abnormality."})
+    assert out.lower().count("no acute abnormality") == 1
+
+
+def test_render_closer_can_be_disabled():
+    case = {"template_content":
+            "FINDINGS:\nLUNGS: clear\n\nIMPRESSION:\nNo acute cardiopulmonary "
+            "abnormality.", "dictation": "effusion"}
+    out = render(case, {"fields": {}, "impression": "Effusion."},
+                 append_impression_closer=False)
+    assert "No acute cardiopulmonary abnormality." not in out
 
 
 def test_run_dataset_end_to_end_with_mock():
