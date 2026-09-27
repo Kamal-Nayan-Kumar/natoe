@@ -116,23 +116,27 @@ private. Three submissions, three behaviours:
 | # | change | local RES | public | private | local Δ | real Δ |
 |---|---|---|---|---|---|---|
 | 5 | LLM pipeline baseline | 0.4026 | 0.42523 | 0.40149 | — | — |
-| 6 | + append template IMPRESSION closer | 0.3721 | 0.42283 | **0.39879** | −0.0305 | **−0.0027** |
+| 6 | + append template IMPRESSION closer | 0.3721 | 0.42283 | 0.39879 | −0.0305 | **−0.0027** |
+| 7 | + 3-shot, prompt asymmetry, robust JSON parse | 0.2842 | 0.36066 | **0.33012** | −0.0879 | **−0.0687** |
 
 Earlier, for the hand-written fallback, local read 0.5695 against a private
 0.64567 and mis-ranked three variants in the wrong order.
 
-**Two consistent findings:**
+**Three consistent findings:**
 
-1. For a **FINDINGS-dominated** submission the local scorer is accurate to
-   ~0.001 (0.4026 vs 0.40149).
-2. The local scorer **systematically over-credits IMPRESSION changes, by
-   roughly 10×.** It rated the closer-append as worth 0.031 RES; it was worth
-   0.0027. Backing out the arithmetic, the real IMPRESSION component moved only
-   ~0.532 → ~0.524 where local said → 0.444.
+1. For a **FINDINGS-dominated** submission the local scorer tracks the real
+   one closely (0.4026 vs 0.40149), but it is consistently **optimistic** and
+   the bias grows as the pipeline improves: +0.000 on submission 5, +0.027 on
+   6, **+0.046 on 7**. Treat a local figure as a *lower bound* on the real
+   score, and expect roughly +0.05 at the current level.
+2. The local scorer **over-credits IMPRESSION changes by ~10×** (0.031 rated vs
+   0.0027 delivered).
+3. Because the bias is *optimistic* and grows with quality, local numbers are
+   still useful for **ranking** changes — every change that improved local has
+   improved the leaderboard — but never quote one as a predicted score.
 
-**Rule: iterate locally on FINDINGS. Treat local IMPRESSION numbers as an
-upper bound on the benefit and confirm with a real submission.** Stop spending
-effort on IMPRESSION micro-optimisation — the metric barely rewards it.
+**Rule: iterate locally, submit to confirm, and add ~0.05 when interpreting a
+local number.**
 
 ---
 
@@ -245,38 +249,160 @@ Current: **0.39879 private**. Target: **< 0.23750**.
 Split: **F = 0.333, I = 0.444**. F carries 65% of the metric, so that is where
 the score actually lives.
 
-Levers, in expected-value order:
+### CORRECTION — the guard comparison was confounded
+
+An earlier version of these notes claimed `strict` costs 0.0154 RES. **That
+number is not supported.** `guard_level` is part of the cache key, so each
+guard level triggered its own *generation*, and the observed spread was almost
+entirely sampling noise. Re-applying all three levels to one fixed set of
+responses moves RES by ≤0.0008 (at 3 shots: off 0.2966 / numbers 0.2967 /
+strict 0.2967).
+
+**The three guard levels are near-equivalent at ≥2 shots.** Keep `numbers`
+because it is free and never hurt, but treat the choice as *unresolved* rather
+than confirmed. Testing it properly means dropping `guard_level` from the cache
+key so the levels share one generation.
+
+### Few-shot DOES help — the earlier negative result was rate limiting
+
+Re-measured properly with the fast API, 0 failed rows in every config, same 60
+rows (verified three ways including a byte-identical baseline fingerprint):
+
+| n_shots | RES | F | I | prompt tokens | vs 0-shot |
+|---|---|---|---|---|---|
+| 0 | 0.3721 | 0.3332 | 0.4444 | 330 | — |
+| 1 | 0.3287 | 0.2959 | 0.3896 | 751 | −0.0434 |
+| 2 | 0.3053 | 0.2691 | 0.3726 | 1151 | −0.067 |
+| **3** | **0.2951** | **0.2560** | **0.3676** | 1590 | **−0.0770** |
+
+0-shot → 3-shot paired Δ = **−0.077** (95% CI 0.048–0.110; 42 wins vs 6
+losses). **But do not overstate the 2→3 step:** Δ=0.010 with a CI that crosses
+zero, and pure model noise for a *fixed* config was measured at 0.009–0.019.
+The defensible claim is "shots help, 0→1→2 is solid, 2→3 is inside the noise."
+
+Zero-shot also produces **malformed JSON on 2/60 rows** (a stray `}`) which
+`parse_json` used to reject, silently degrading those rows to the template.
+That is a real quality difference favouring few-shot, independent of rate
+limiting. Fixed — see the parser tests.
+
+### The router must NOT go in the prompt
+
+Decisive measurement, no API calls needed (60/60 cache coverage): router and
+LLM agree on 85.7% of comparable sentences and are **94.5% correct when they
+agree**. On the 60 disagreements: **router 15, LLM 37, both wrong 8 →
+28.8%**. Substituting the router's routing into the LLM's own content, content
+held fixed, costs **+0.043 F**. Three runs bracketed it: 0.263 / 0.308 / 0.288.
+
+Router-only submission scores RES 0.5839 (F 0.5047) against the LLM's 0.3327
+(F 0.2960) — a real 0.25 RES behind. The router beats the naive baselines and
+loses to the model.
+
+**The one component that does beat the LLM is the facet rule (2/2 across runs)
+— and that is a prompt line, not a router.** Note the correct ordering is the
+opposite of the intuitive one: when the template has *both* `VERTEBRAE` and
+`DISCS/DEGENERATIVE CHANGES`, the reference routes facet arthropathy to
+**DISCS** (16/16), because that template's own DISCS normal literally reads "No
+significant facet arthropathy". VERTEBRAE-first scores 42/99, DISCS-first
+58/99.
+
+Also: the router's `margin` is a genuine confidence signal (out-of-fold accuracy
+0.458 at margin<2 rising to 0.967 at margin≥40), but applying it selectively
+moves 1–25 sentences and lands within ±0.0016 F, **flipping sign between
+runs** — inside the noise, and consistent with every other content-based
+selection proxy having failed.
+
+### The metric punishes under-editing 3× more than over-editing
+
+This is forced by the scorer, not by radiology, and it is the single most
+important thing to know when writing the prompt:
+
+* a field the **reference changed** is charged `field_weight = 3`
+* a field the **reference left alone** is charged `field_weight = 1`
+
+So an unnecessary edit costs ~1/3 of what a **missed** edit costs. Every
+intuition about "be conservative, don't invent" points the wrong way here.
+
+A best-of-N experiment (5 samples/row, 80 rows, no gold used for selection)
+confirmed it from the other direction. The best selector found was two terms
+with no fitted parameters:
+
+```python
+aggressiveness(clean) = len(clean["fields"]) - 2.0 * (not clean["impression"].strip())
+```
+
+Pick the candidate that edits the most fields and always writes an impression.
+It recovered **41% of the oracle headroom** (0.3912 random → 0.3595, oracle
+0.3133), and it works out-of-sample (the rule was found on set A and did
+*better* on set B, +54%).
+
+Measured headroom, for reference: oracle best-of-5 = **0.078 RES (19.9%)** of
+the score, ~2/3 of it in FINDINGS.
+
+### Things that were tried and did not work
+
+* **Every content-based proxy failed.** Dictation coverage, sentence drop rate,
+  unsupported content, verbatim-copy fraction, cross-candidate consensus — all
+  within noise of random on one of the two evaluation sets. Pooled Spearman
+  correlation is actively misleading here: it is dominated by row difficulty,
+  and gave the *wrong sign* for coverage.
+* **Unsupported-content proxy is dead on arrival**, not merely weak: the
+  `numbers` guard already strips every unsupported numeric token, so the
+  feature is identically zero for all candidates. Consistent with `strict`
+  costing 0.19 RES — the references *do* add laterality the dictation never
+  stated.
+* **Majority vote is actively harmful**: RES 0.5145, i.e. −111% of headroom,
+  worse than every individual candidate. It unions the fields any candidate
+  touched, so a single hallucinating candidate poisons the report.
+* **A 16-feature ridge over all these signals ties the 2-term rule.** Do not
+  build learned machinery here.
+* **temperature = 0 is not the best single sample** — on one 40-row set it was
+  the *worst* of five. Roughly 0.02 RES of the current score is pure sampling
+  noise, recoverable for free. The temperature=0 call can also be dropped
+  entirely: four T=0.7 samples select as well as five including it.
+
+### Levers, in expected-value order
 
 1. **F — better field content.** 0.333 × 0.65 = 0.217 of the 0.372 total. The
    LLM already beats oracle-routing-plus-copying (F 0.333 vs 0.4595), so this
    needs better *generation*, not better assembly. **LoRA fine-tuning on the
    636 labelled rows is the highest-expected-value remaining move.**
-2. **Few-shot, re-measured** (agent running). The earlier negative was rate
-   limiting, not quality.
-3. **Best-of-N with a self-scoring proxy** (agent running) — reject a patch
-   that leaves dictated findings unrouted or invents a measurement. A
-   selection signal available at inference time, with no gold.
-4. **Router as a prior** (agent running). 0.83 top-1; worth ~0.027 RES per
-   10pp, but only if it beats the LLM on the rows where they disagree.
-5. **IMPRESSION — deprioritised.** It is 35% of the metric, but the real scorer
-   barely rewards improvements to it (see the calibration table: local rated
-   the closer-append at 0.031 RES, reality delivered 0.0027). The copy-only
-   ceiling is 0.296 so there is headroom on paper, but measurement says effort
-   here converts poorly. Stop micro-optimising it.
-6. **Jev** (`jev-1.13` is on Zen, ~$0.042/M input) as the *decision* layer:
+2. **Prompt asymmetry** (done): the original rule 3 told the model to be
+   conservative, which is actively harmful given the 3:1 penalty. Rewritten to
+   be explicitly liberal, plus "never return an empty impression". This is the
+   best-of-N finding applied at N=1 for zero extra API cost.
+3. **Few-shot, re-measured.** The earlier negative was rate limiting, not
+   quality.
+4. **Best-of-N**, if the above does not capture it. Worth ~0.03 at 5× API
+   cost; the two-term selector is trivial to implement.
+5. **Router as a prior.** 0.83 top-1; worth ~0.027 RES per 10pp, but only if it
+   beats the LLM on the rows where they disagree.
+6. **IMPRESSION — deprioritised.** 35% of the metric, but the real scorer barely
+   rewards improvements to it (local rated the closer-append at 0.031 RES,
+   reality delivered 0.0027).
+7. **Jev** (`jev-1.13` is on Zen, ~$0.042/M input) as the *decision* layer:
    "does this finding belong in field X?" is a `choice` question, "is this
    sentence supported by the dictation?" a `noul`.
 
 ### Honest assessment of the 0.2375 target
 
-Reaching it needs roughly F ≈ 0.26 **and** I ≈ 0.20 simultaneously. Measured
-ceilings say a copy-based approach cannot get there — oracle routing plus
-copy-append is F 0.4595, worse than what the prompted model already achieves.
-So the number is reachable only through materially better generation, which in
-practice means fine-tuning on the 636 labelled rows (or a stronger model, which
-this account cannot currently buy). Prompt engineering is close to exhausted:
-the three levers above are worth a few hundredths between them, not the ~0.16
-that is needed.
+Reaching it needs roughly **F ≈ 0.26 and I ≈ 0.20** simultaneously. Where we
+are after the prompt-asymmetry and few-shot fixes: **F ≈ 0.256, I ≈ 0.368**
+(3-shot), i.e. RES ≈ 0.295 locally.
+
+That is a much better place than the 0.40149 we started from today, and F is
+now close to the 0.26 needed. But **I = 0.368 against a required 0.20 is the
+binding constraint**, and the IMPRESSION is the component where (a) the copy
+ceiling is 0.296, and (b) the real leaderboard rewards improvements roughly 10×
+less than the local scorer predicts. Note also that the unreachable-looking part
+of the IMPRESSION is concentrated in the 1-sentence dictation bucket (185/636
+rows), where the gold requires *rewriting telegraphic shorthand into clinical
+prose* — a generation problem, not a selection one.
+
+So the remaining honest path to 0.2375 is a better generator: **LoRA fine-tune
+on the 636 labelled rows**, reusing the identical guard and render code so it is
+a drop-in swap. Prompt engineering has now delivered most of what it can
+(0.4026 → ~0.295); the remaining ~0.06 is unlikely to come from more prompt
+tweaks.
 
 ---
 
@@ -328,12 +454,28 @@ outputs/         llm_cache.json, dev_results.json, submission.csv (gitignored)
 | 2 | + abnormality-filtered IMPRESSION | 0.63136 | 0.65007 |
 | 3 | no sentence filter | 0.64123 | 0.64932 |
 | 4 | restore of #1 | 0.62616 | 0.64567 |
-| 5 | LLM JSON-patch pipeline | 0.42523 | 0.40149 |
-| 6 | + append template IMPRESSION closer | **0.42283** | **0.39879** |
+| 5 | LLM JSON-patch pipeline, 0-shot | 0.42523 | 0.40149 |
+| 6 | + append template IMPRESSION closer | 0.42283 | 0.39879 |
+| 7 | **+ 3-shot, prompt asymmetry, robust JSON parse** | **0.36066** | **0.33012** |
 
-Submission 5 reproduced deterministically and validates cleanly
-(`validate_submission`: columns, case_id set, both sections, no leaked
-dictation, no unlabelled FINDINGS text, no labels outside the template).
+Every submission validates cleanly (`validate_submission`: columns, case_id
+set, both sections, no leaked dictation, no unlabelled FINDINGS text, no labels
+outside the template). Submissions 1 and 4 reproduced identically, confirming
+the pipeline is deterministic.
+
+**Progress: 0.64567 → 0.33012 private, a 49% reduction**, all since the API was
+unblocked.
+
+## 12. Reproduce the current best
+
+```bash
+python scripts/predict_test.py --provider opencode --n-shots 3 --guard numbers
+```
+
+`LLM_PROVIDER`, `LLM_MODEL` and `REASONING_EFFORT` can override the defaults in
+`src/natoe/config.py`. Responses cache to `outputs/llm_cache.json`, keyed by
+`(model, reasoning_effort, guard_level, n_shots, temperature, system_prompt,
+prompt)`, so re-runs are free.
 
 ### Still outstanding for the hiring review
 

@@ -34,6 +34,9 @@ def main() -> int:
     ap.add_argument("--n-shots", type=int, default=DEFAULT_N_SHOTS)
     ap.add_argument("--guard", default=DEFAULT_GUARD_LEVEL,
                     choices=["off", "numbers", "strict"])
+    ap.add_argument("--n-samples", type=int, default=1,
+                    help="candidates per row; >1 enables the aggressiveness "
+                         "selector (no gold needed)")
     ap.add_argument("--out", default=str(OUTPUT_DIR / "submission.csv"))
     args = ap.parse_args()
 
@@ -53,13 +56,15 @@ def main() -> int:
         llm = LLM(provider=name, model=args.model or None)
 
     print(f"provider : {llm.provider}  model: {llm.model}")
-    print(f"config   : n_shots={args.n_shots}  guard={args.guard}")
+    print(f"config   : n_shots={args.n_shots}  guard={args.guard}  "
+          f"n_samples={args.n_samples}")
     print(f"test rows: {len(test)}\n")
 
     # test.csv has no `report` column, so it cannot be scored -- call
     # run_dataset directly rather than run_and_score.
     preds = run_dataset(llm, test, retriever, train, n_shots=args.n_shots,
-                        guard_level=args.guard, cache_path=CACHE_PATH)
+                        guard_level=args.guard, cache_path=CACHE_PATH,
+                        n_samples=args.n_samples)
 
     sub = pd.DataFrame({"case_id": test.case_id, "report": preds})
     errs = validate_submission(sub, test)

@@ -250,6 +250,27 @@ def test_parse_json_strips_code_fence():
     assert parse_json('```json\n{"fields": {}}\n```') == {"fields": {}}
 
 
+def test_parse_json_recovers_the_doubled_brace_artefact():
+    """Regression: the model emits a stray '}', which used to lose the whole
+    row (it degraded to the template). Measured on 2/60 zero-shot rows."""
+    got = parse_json('{"fields":{}},"impression":"No acute abnormality."}')
+    assert got == {"fields": {}, "impression": "No acute abnormality."}
+    got = parse_json('{"fields":{"BONES":"fx"}},"impression":"y"}')
+    assert got == {"fields": {"BONES": "fx"}, "impression": "y"}
+
+
+def test_parse_json_keeps_the_impression_when_fields_is_empty():
+    """A greedy balanced scan would stop at the first '}}' and drop the
+    impression, which is 35% of the metric."""
+    got = parse_json('{"fields":{}},"impression":"critical finding"')
+    assert got.get("impression") == "critical finding"
+
+
+def test_parse_json_raises_on_unparseable():
+    with pytest.raises(ValueError):
+        parse_json("there is no json here")
+
+
 def test_mock_llm_produces_renderable_output():
     llm = MockLLM()
     case = dict(CASE, modality="XRAY", body_part="Chest",
@@ -324,6 +345,71 @@ def test_render_closer_can_be_disabled():
     out = render(case, {"fields": {}, "impression": "Effusion."},
                  append_impression_closer=False)
     assert "No acute cardiopulmonary abnormality." not in out
+
+
+def test_aggressiveness_prefers_more_edited_fields():
+    from natoe.pipeline import aggressiveness
+
+    few = {"fields": {"A": "x"}, "impression": "s"}
+    many = {"fields": {"A": "x", "B": "y", "C": "z"}, "impression": "s"}
+    assert aggressiveness(many) > aggressiveness(few)
+
+
+def test_aggressiveness_penalises_an_empty_impression():
+    """An empty impression forfeits 35% of the metric.
+
+    At the measured weight of 2.0, writing the impression is worth two extra
+    edited fields -- which is the intended trade, since an empty impression
+    makes the renderer fall back to the template for a third of the score.
+    """
+    from natoe.pipeline import aggressiveness
+
+    one_written = {"fields": {"A": "x"}, "impression": "s"}
+    one_empty = {"fields": {"A": "x"}, "impression": ""}
+    three_empty = {"fields": {"A": "x", "B": "y", "C": "z"}, "impression": ""}
+    # writing the impression always beats leaving it empty at equal field count
+    assert aggressiveness(one_written) > aggressiveness(one_empty)
+    # and it is worth ~2 edited fields
+    assert aggressiveness(one_empty) == 1 - 2
+    assert aggressiveness(three_empty) > aggressiveness(one_empty)
+
+
+def test_aggressiveness_weight_is_insensitive_in_range():
+    """The measured rule selects identically for any weight in [2, 10]."""
+    from natoe.pipeline import aggressiveness
+
+    cands = [{"fields": {"A": "x"}, "impression": ""},
+             {"fields": {"A": "x", "B": "y"}, "impression": ""},
+             {"fields": {"A": "x"}, "impression": "s"}]
+    picks = {max(range(len(cands)),
+                 key=lambda i: aggressiveness(cands[i], impression_weight=w))
+             for w in (2.0, 3.0, 5.0, 10.0)}
+    assert len(picks) == 1
+
+
+def test_select_patch_picks_most_aggressive_and_handles_empty():
+    from natoe.pipeline import select_patch
+
+    assert select_patch([])["fields"] == {}
+    a = {"fields": {"A": "x"}, "impression": "", "drops": []}
+    b = {"fields": {"A": "x", "B": "y"}, "impression": "", "drops": []}
+    assert select_patch([a, b]) is b
+
+
+@pytest.mark.skipif(not TRAIN_CSV.exists(), reason="train.csv not present")
+def test_run_dataset_multi_sample_selects_one_candidate():
+    """n_samples>1 must produce exactly one valid report per row."""
+    from natoe.evaluate import dev_split
+    from natoe.pipeline import run_dataset
+
+    train = pd.read_csv(TRAIN_CSV).head(40)
+    dev, pool = dev_split(train, n_dev=5)
+    retriever = Retriever((pool.body_part + " " + pool.template_content).tolist())
+    outs = run_dataset(MockLLM(), dev, retriever, pool, n_shots=1,
+                       progress=False, workers=2, n_samples=3)
+    assert len(outs) == len(dev)
+    for out in outs:
+        assert out.startswith("FINDINGS:") and "IMPRESSION:" in out
 
 
 def test_run_dataset_end_to_end_with_mock():

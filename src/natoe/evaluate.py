@@ -118,12 +118,13 @@ def run_and_score(llm, frame: pd.DataFrame, retriever: Retriever,
                   pool: pd.DataFrame, n_shots: int = DEFAULT_N_SHOTS,
                   guard_level: str = DEFAULT_GUARD_LEVEL,
                   cache_path: str | Path | None = None,
-                  progress: bool = True) -> tuple[list[str], dict]:
+                  progress: bool = True,
+                  n_samples: int = 1) -> tuple[list[str], dict]:
     t0 = time.time()
     preds = run_dataset(llm, frame, retriever, pool, n_shots=n_shots,
                         guard_level=guard_level,
                         cache_path=str(cache_path) if cache_path else None,
-                        progress=progress)
+                        progress=progress, n_samples=n_samples)
     res = score_predictions(frame, preds)
     res["seconds"] = time.time() - t0
     return preds, res

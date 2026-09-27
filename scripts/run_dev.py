@@ -43,6 +43,9 @@ def main() -> int:
     ap.add_argument("--n-shots", type=int, default=DEFAULT_N_SHOTS)
     ap.add_argument("--guard", default=DEFAULT_GUARD_LEVEL,
                     choices=["off", "numbers", "strict"])
+    ap.add_argument("--n-samples", type=int, default=1,
+                    help="candidates per row; >1 enables the aggressiveness "
+                         "selector (no gold needed)")
     ap.add_argument("--variants", action="store_true",
                     help="sweep n_shots x guard_level")
     ap.add_argument("--n-errors", type=int, default=3)
@@ -88,11 +91,13 @@ def main() -> int:
             continue
         preds, res = run_and_score(llm, dev, retriever, pool, n_shots=n_shots,
                                    guard_level=guard, cache_path=CACHE_PATH,
-                                   progress=len(combos) == 1)
-        row = {"n_shots": n_shots, "guard": guard, "RES": res["RES"],
-               "F": res["F"], "I": res["I"], "seconds": round(res["seconds"], 1)}
+                                   progress=len(combos) == 1,
+                                   n_samples=args.n_samples)
+        row = {"n_shots": n_shots, "guard": guard, "n_samples": args.n_samples,
+               "RES": res["RES"], "F": res["F"], "I": res["I"],
+               "seconds": round(res["seconds"], 1)}
         results.append(row)
-        print(f"n_shots={n_shots}  guard={guard:8s} -> "
+        print(f"n_shots={n_shots}  guard={guard:8s}  N={args.n_samples} -> "
               f"RES={res['RES']:.4f}  F={res['F']:.4f}  I={res['I']:.4f}  "
               f"({res['seconds']:.0f}s)")
         if best is None or res["RES"] < best[0]:
