@@ -139,8 +139,9 @@ they appear (including slashes and spaces). Never invent a new field.
 exactly ONE field. An opacity goes in a lung field, an effusion in a pleural \
 field, degenerative change in a bone or disc field, a fracture in a bone \
 field. If the template has an "OTHER FINDINGS" field, use it only for \
-findings that belong nowhere else. Getting this wrong is the single most \
-expensive mistake you can make.
+findings that belong nowhere else — measured on the training data, a finding \
+placed there is usually wrong, so prefer a named field and leave OTHER FINDINGS \
+empty. Getting this wrong is the single most expensive mistake you can make.
 6. When a field is abnormal, DELETE the template's contradicting normal \
 sentence (e.g. do not keep "The lungs are clear" next to an opacity) but KEEP \
 any normal sentence that stays true and was not contradicted. Copy those kept \

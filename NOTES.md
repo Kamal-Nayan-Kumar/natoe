@@ -338,6 +338,83 @@ It recovered **41% of the oracle headroom** (0.3912 random → 0.3595, oracle
 Measured headroom, for reference: oracle best-of-5 = **0.078 RES (19.9%)** of
 the score, ~2/3 of it in FINDINGS.
 
+### The copy ceiling splits the problem in two
+
+Fraction of each **changed** gold field's tokens that are findable, by dictation
+length (636 train rows, 2153 changed fields):
+
+| dictation length | from dictation | from template | **from either** | must be **generated** |
+|---|---|---|---|---|
+| **1 sentence** (215 f) | 0.296 | 0.504 | **0.733** | **27%** |
+| 2–3 (86) | 0.573 | 0.478 | 0.878 | 12% |
+| 4–7 (160) | 0.849 | 0.368 | 0.939 | 6% |
+| 8–15 (676) | 0.906 | 0.472 | **0.975** | 2.5% |
+| 16+ (1016) | 0.944 | 0.538 | **0.980** | 2% |
+
+So long dictations are almost entirely a **selection** problem and 1-sentence
+dictations are a **generation** problem. Combined with the error concentration
+(1-sentence = 34% of total loss, 8–15 = 33%), that says where the difficulty
+lives.
+
+### Two hypotheses tested and REFUTED
+
+**1. "Long dictations are 98% copyable, so a deterministic copy-assembler
+should beat the LLM there."** It does not. Per-bucket mean per-row edit:
+
+| bucket | LLM | router copy-assembly |
+|---|---|---|
+| 1 | **0.286** | 0.334 |
+| 2–3 | **0.366** | 0.495 |
+| 4–7 | **0.323** | 0.514 |
+| 8–15+ | **0.360** | 0.527 |
+
+The router loses in **every** bucket, including the one where copying is
+essentially the whole task. Its ~23% sentence-level routing error rate costs
+more than the LLM's paraphrasing does — and routing is scored twice by the
+metric. No hybrid threshold helps. This closes the router line.
+
+**2. "Best-of-N with the aggressiveness selector is worth ~0.03."** It is worth
+**−0.020**: N=4 scores 0.3040 against N=1's 0.2842.
+
+The reason is instructive. The selector's proxy ("edit as many fields as
+possible, always write an impression") was fitted under the *conservative*
+prompt, where the model under-edited. Once the prompt itself is liberal the
+selector has nothing left to correct and actively over-edits. **The two fixes
+are substitutes, not complements** — and the prompt fix is free. Ship N=1.
+
+Generalisable lesson: a selection rule tuned against one generator can invert
+once that generator is fixed. Re-measure the selector after changing the thing
+it was selecting over.
+
+### The noise floor — why further prompt tweaking is pointless
+
+Adding `temperature` to the response-cache key (a correctness fix) invalidated
+the cache, so the *identical* config was regenerated from scratch:
+
+| run of the same config | local RES |
+|---|---|
+| first generation | 0.2842 |
+| second generation | **0.2956** |
+
+**Δ = 0.011 for the same prompt, same model, same temperature.** That matches
+the independently measured 0.009–0.019 noise band for a fixed config. Only
+9–12 of 60 responses were byte-identical between the two runs.
+
+**Consequence: any local improvement smaller than ~0.02 is unmeasurable on a
+60-row dev split.** Three recent changes fall inside that band and are recorded
+as no-gain, not as wins:
+
+| change | local RES | verdict |
+|---|---|---|
+| validated config (3-shot, liberal prompt) | 0.2842 / 0.2956 | baseline |
+| + facet-arthropathy routing rule in the prompt | 0.3004 | no gain — reverted |
+| 4 shots | 0.2989 | no gain |
+| 5 shots | 0.2936 | no gain |
+
+A 60-row split cannot resolve these, and neither can 132 test rows. Shipping
+any of them would be selecting on noise — the same overfitting trap that the
+local-vs-real disagreement already demonstrated once.
+
 ### Things that were tried and did not work
 
 * **Every content-based proxy failed.** Dictation coverage, sentence drop rate,
