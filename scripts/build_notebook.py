@@ -33,6 +33,24 @@ def code(src: str) -> None:
     cells.append(nbf.v4.new_code_cell(src.strip("\n")))
 
 
+def dcode(src: str, why: str = "") -> None:
+    """A code cell that needs the competition CSVs.
+
+    Wraps the body in a guard so that running the notebook on Kaggle *without*
+    the data attached prints one clear message per cell instead of cascading
+    into `NameError: name 'TRAIN' is not defined` a dozen times. A notebook
+    that is a review artefact should stay readable even when it cannot do the
+    work.
+    """
+    body = src.strip("\n")
+    indented = "\n".join(("    " + ln) if ln.strip() else ln
+                         for ln in body.split("\n"))
+    msg = why or ("SKIPPED: the competition CSVs are not available. "
+                  "Attach the competition under Add Input, or upload "
+                  "train.csv / test.csv and set NATOE_DATA_DIR.")
+    code(f"if not HAVE_DATA:\n    print({msg!r})\nelse:\n{indented}")
+
+
 def writefile(rel: str, src: str) -> None:
     code(f"%%writefile {rel}\n{src.strip()}")
 
@@ -207,7 +225,7 @@ md(r"""
 ### One worked example, so the shape of the data is concrete
 """)
 
-code(r"""
+dcode(r"""
 _ex = TRAIN[(TRAIN.body_part == "Chest") & (TRAIN.modality == "XRAY")].iloc[0]
 print(f"STUDY: {_ex.study_description} | age {_ex.patient_age_band} | {_ex.patient_sex}")
 print("\n--- DICTATION ---\n" + _ex.dictation)
@@ -294,7 +312,7 @@ md(r"""
 Measure the dumb options before trying to be clever.
 """)
 
-code(r"""
+dcode(r"""
 print("ON THE FULL TRAIN SET")
 print(baselines(TRAIN).to_string(index=False))
 print("\n'B1' is the number every real submission has to beat.")
@@ -307,7 +325,7 @@ md(r"""
 These measurements determined the design of the prompt and the renderer.
 """)
 
-code(r"""
+dcode(r"""
 diag = diagnosis_table(TRAIN)
 print(f"fields per reference report          : {diag.n_fields.mean():.2f}")
 print(f"fields that DIFFER from the template : {diag.n_changed.mean():.2f}"
@@ -321,7 +339,7 @@ print(f"IMPRESSION identical to the template : "
       f"{diag.impression_equals_template.sum()} / {len(diag)}")
 """)
 
-code(r"""
+dcode(r"""
 # Where does a CHANGED field's wording come from: the dictation or the template?
 from collections import Counter
 src = Counter()
@@ -365,7 +383,7 @@ exact per-field edits the reference made — and score it. If that is not ≈0,
 the assembly is broken and no amount of prompting will save us.
 """)
 
-code(r"""
+dcode(r"""
 rows = []
 for level in ("off", "numbers", "strict"):
     outs = []
@@ -410,7 +428,7 @@ Similarity is TF-IDF cosine over normalised tokens, implemented in
 `pipeline.Retriever` so the notebook has no extra dependency.
 """)
 
-code(r"""
+dcode(r"""
 # Sized as a demonstration, not a benchmark: the TF-IDF retriever and the
 # offline MockLLM are pure Python and slow down over a few hundred rows. The
 # full 300-row evaluation behind the numbers quoted in the README is
@@ -432,7 +450,7 @@ for i in RETRIEVER.query(_probe_query, top_k=3):
           f"{str(POOL.dictation[i])[:70]!r}")
 """)
 
-code(r"""
+dcode(r"""
 _shots = build_shots(RETRIEVER, POOL, _probe, n_shots=1)
 _prompt = build_user_prompt(_probe, _shots)
 print(f"prompt with 1 shot: ~{len(_prompt) // 4} tokens\n")
@@ -472,7 +490,7 @@ else:
     print("Add GROQ_API_KEY or OPENROUTER_API_KEY to .env and re-run.")
 """)
 
-code(r'''
+dcode(r'''
 # one row, end to end, so the contract is visible
 _row = DEV.iloc[1].to_dict()          # .to_dict(), not dict(): attribute access
 _case = {"template_content": _row["template_content"],
@@ -492,7 +510,7 @@ md(r"""
 ## 10. Run on the dev split and score
 """)
 
-code(r"""
+dcode(r"""
 dev_preds, dev_res = run_and_score(LLM_RUNNER, DEV, RETRIEVER, POOL,
                                    n_shots=C.DEFAULT_N_SHOTS,
                                    guard_level=C.DEFAULT_GUARD_LEVEL,
@@ -514,7 +532,7 @@ unedited" and the oracle we closed**. That, not the absolute RES, is what tells
 us whether a change helped.
 """)
 
-code(r"""
+dcode(r"""
 _b = baselines(DEV)
 base, oracle = float(_b.iloc[1]["RES"]), 0.0
 print(f"template unedited : {base:.4f}")
@@ -532,19 +550,19 @@ RES is an average, so the mean hides which cases fail. The worst cases are
 where the remaining work is.
 """)
 
-code(r"""
+dcode(r"""
 per = per_case(dev_res, DEV)
 print(per.describe(percentiles=[.25, .5, .75, .9, .95]).round(3).to_string())
 """)
 
-code(r"""
+dcode(r"""
 loss = field_loss_table(dev_res)
 display(loss.head(15).round(4))
 if len(loss):
     print(f"top 10 field labels = {loss.share.head(10).sum():.0%} of total FINDINGS loss")
 """)
 
-code(r"""
+dcode(r"""
 for i in per.sort_values(ascending=False).index[:3]:
     r = DEV.loc[i]
     print("=" * 96)
@@ -573,7 +591,7 @@ routing mistakes, the fix belongs in the rules of the system prompt, not in a
 bigger model.
 """)
 
-code(r'''
+dcode(r'''
 # A compact sweep so the notebook stays a readable demonstration. The full
 # 300-row evaluation behind these numbers lives in
 #   python scripts/run_dev.py --n-dev 300 --n-shots 3 --guard numbers
@@ -605,13 +623,15 @@ For the real test set *every* train row is legitimately available as a
 few-shot exemplar, including the ones held out during dev evaluation.
 """)
 
-code(r"""
+dcode(r"""
 N_SHOTS, LEVEL = int(BEST.n_shots), BEST.guard
 TEST_RETRIEVER = build_retriever(TRAIN)      # full train set as the pool
 
-test_preds, _ = run_and_score(LLM_RUNNER, TEST, TEST_RETRIEVER, TRAIN,
-                              n_shots=N_SHOTS, guard_level=LEVEL,
-                              cache_path=C.CACHE_PATH)
+# run_dataset, not run_and_score: test.csv has no `report` column, so there is
+# nothing to score against.
+test_preds = run_dataset(LLM_RUNNER, TEST, TEST_RETRIEVER, TRAIN,
+                         n_shots=N_SHOTS, guard_level=LEVEL,
+                         cache_path=C.CACHE_PATH)
 
 SUB = pd.DataFrame({"case_id": TEST.case_id, "report": test_preds})
 import csv as _csv
@@ -621,7 +641,7 @@ SUB.to_csv(OUT_PATH, index=False, quoting=_csv.QUOTE_ALL)
 print(f"wrote {OUT_PATH}  {SUB.shape}   (n_shots={N_SHOTS}, guard={LEVEL})")
 """)
 
-code(r"""
+dcode(r"""
 import csv
 
 def validate(sub, test):
@@ -662,7 +682,7 @@ print(f"\nmean report length: {SUB.report.str.len().mean():.0f} chars")
 print("\n--- first prediction ---\n" + SUB.report.iloc[0])
 """)
 
-code(r"""
+dcode(r"""
 print("Submit:\n"
       "  kaggle competitions submit -c radiology-reporting-harness \\\n"
       f"      -f {OUT_PATH} -m \"template-edit pipeline: LLM JSON patch + deterministic render\"\n\n"

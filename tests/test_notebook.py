@@ -111,6 +111,39 @@ def test_notebook_writes_the_package_init():
     assert "%%writefile src/natoe/__init__.py" in written
 
 
+@pytest.mark.skipif(not NB.exists(), reason="notebook not generated yet")
+def test_data_dependent_cells_are_guarded():
+    """Without the competition CSVs, TRAIN/TEST are never defined, and every
+    later cell dies with a bare `NameError: name 'TRAIN' is not defined`. The
+    notebook is a review artefact, so it has to stay readable when it cannot do
+    the work: each such cell must be wrapped in a HAVE_DATA guard."""
+    import re
+
+    nb = load_nb()
+    offenders = []
+    for i, c in enumerate(nb.cells):
+        if c.cell_type != "code":
+            continue
+        s = c.source
+        if s.lstrip().startswith("%%writefile"):
+            continue
+        if s.lstrip().startswith("if not HAVE_DATA:"):
+            continue
+        if re.search(r"\b(TRAIN|TEST|DEV|POOL|SAMPLE|BEST|VARIANTS|SUB|"
+                     r"dev_res|dev_preds|test_preds|RETRIEVER)\b", s):
+            offenders.append(i)
+    # exactly one cell may legitimately be unguarded: the one that loads them
+    assert len(offenders) <= 1, (
+        f"unguarded data-dependent cells: {offenders}")
+
+
+@pytest.mark.skipif(not NB.exists(), reason="notebook not generated yet")
+def test_notebook_defines_have_data():
+    cells = [c.source for c in load_nb().cells if c.cell_type == "code"]
+    assert any("HAVE_DATA =" in c for c in cells), \
+        "no cell computes HAVE_DATA, so the guards can never fire"
+
+
 def test_env_example_lists_both_providers():
     text = (ROOT / ".env.example").read_text()
     assert "GROQ_API_KEY" in text

@@ -35,20 +35,21 @@ SAMPLE_SUBMISSION_CSV = DATA_DIR / "sample_submission.csv"
 # %%writefile cells, and the CSVs arrive as a dataset mounted elsewhere. Look in
 # the usual mount points so the notebook runs unmodified.
 if not TRAIN_CSV.exists():
-    for _alt in (Path("/kaggle/working/data"), Path("/kaggle/working"),
-                 Path("/kaggle/input")):
-        if (_alt / "train.csv").exists():
+    # Kaggle mounts attached inputs under /kaggle/input/<slug>/, and the
+    # competition slug is not ours to know, so glob for it.
+    _cands = [Path("/kaggle/working/data"), Path("/kaggle/working"),
+              Path("/kaggle/input"), Path(".")]
+    if Path("/kaggle/input").exists():
+        _cands += sorted(p.parent for p in
+                         Path("/kaggle/input").glob("*/train.csv"))
+        _cands += sorted(p.parent for p in
+                         Path("/kaggle/input").glob("*/*/train.csv"))
+    for _alt in _cands:
+        if (_alt / "train.csv").exists() and (_alt / "test.csv").exists():
             DATA_DIR = _alt
             TRAIN_CSV = _alt / "train.csv"
             TEST_CSV = _alt / "test.csv"
             SAMPLE_SUBMISSION_CSV = _alt / "sample_submission.csv"
-            break
-    else:
-        for _d in sorted(Path("/kaggle/input").glob("*/train.csv")) if \
-                Path("/kaggle/input").exists() else []:
-            DATA_DIR = _d.parent
-            TRAIN_CSV, TEST_CSV = _d, _d.parent / "test.csv"
-            SAMPLE_SUBMISSION_CSV = _d.parent / "sample_submission.csv"
             break
 
 INPUT_COLUMNS = [
