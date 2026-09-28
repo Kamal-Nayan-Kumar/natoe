@@ -121,7 +121,10 @@ DEV_SEED = 42
 
 
 def provider_name() -> str:
-    return os.getenv("LLM_PROVIDER", "groq").strip().lower()
+    # Defaults to the provider that produced the shipped submission
+    # (opencode / space-bunny-free, 0.36066 public / 0.33012 private). Set
+    # LLM_PROVIDER=groq or openrouter to use an alternative.
+    return os.getenv("LLM_PROVIDER", "opencode").strip().lower()
 
 
 def model_name(provider: str | None = None) -> str:

@@ -88,19 +88,35 @@ import pandas as pd          # every data cell below relies on this
 HERE = Path.cwd()
 DATA = HERE / "data" if (HERE / "data").exists() else HERE
 
-# --- secrets: local .env, or a Kaggle secret --------------------------
+# --- secrets: local .env, or Kaggle Secrets ----------------------------
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
-# On Kaggle, add the key as a Secret and inject it instead:
-#   from kaggle_secrets import UserSecretsClient
-#   os.environ["GROQ_API_KEY"] = UserSecretsClient().get_secret("GROQ_API_KEY")
+# On Kaggle: attach the key under Settings -> Secrets, named exactly
+# OPENCODE_API_KEY (the provider that produced the shipped submission).
+# It is picked up here automatically. If no secret is attached the notebook
+# still runs end to end on the offline MockLLM, which exercises the whole
+# pipeline with no API call -- useful for a reviewer who has no key.
+try:
+    from kaggle_secrets import UserSecretsClient
+    _ks = UserSecretsClient()
+    for _k in ("OPENCODE_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"):
+        if not os.environ.get(_k):
+            try:
+                os.environ[_k] = _ks.get_secret(_k)
+            except Exception:
+                pass
+except Exception:
+    pass
 
-for k in ("GROQ_API_KEY", "OPENROUTER_API_KEY"):
-    print(f"{k:20s} {'set' if os.getenv(k) else '-- not set --'}")
+print("provider:", os.environ.get("LLM_PROVIDER", "opencode"))
+for k in ("OPENCODE_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"):
+    v = os.getenv(k)
+    print(f"{k:20s} {'set' if v else '-- not set --'}"
+          + (f"  ({v[:6]}...)" if v else ""))
 print("data dir:", DATA)
 print("csvs:", sorted(p.name for p in DATA.glob('*.csv')))
 """)

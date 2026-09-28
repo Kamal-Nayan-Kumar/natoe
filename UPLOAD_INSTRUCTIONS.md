@@ -8,6 +8,38 @@ makes the entry **complete**.
 
 ---
 
+## 0. Environment variables — what you actually need
+
+**One secret, and only if you want the notebook to reproduce the score:**
+
+| Kaggle Secret name | value | needed? |
+|---|---|---|
+| `OPENCODE_API_KEY` | your `oc_sk_...` key (it's in `/Users/nayan/Documents/code/natoe/.env`) | optional |
+
+Nothing else. No other variables are required.
+
+**With the secret attached** the notebook calls `space-bunny-free` and
+reproduces the real pipeline (~0.33 RES).
+
+**Without it** the notebook still runs end to end on the built-in offline
+`MockLLM` — no API call, no cost, and it exercises the whole
+retrieve → prompt → guard → render path. That is the better mode for a
+reviewer who has no key, and the rules explicitly say the notebook does not
+need to execute on Kaggle.
+
+The setup cell auto-detects Kaggle Secrets, so there is nothing to edit in the
+code. Do **not** paste the key into a cell.
+
+Optional overrides, set as additional Kaggle Secrets if you want them:
+
+| variable | effect |
+|---|---|
+| `LLM_PROVIDER` | `opencode` (default), `groq`, or `openrouter` |
+| `LLM_MODEL` | override the model id |
+| `NATOE_NB_DEV` | dev rows for the demo (default 60) |
+
+---
+
 ## 1. File Upload tab → the CSV
 
 **File to upload:**
