@@ -18,8 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "src" / "natoe"
 OUT = ROOT / "notebooks" / "natoe_pipeline.ipynb"
 
-MODULES = ["res_scorer.py", "pipeline.py", "config.py", "evaluate.py",
-           "impression.py"]
+MODULES = ["__init__.py", "res_scorer.py", "pipeline.py", "config.py",
+           "evaluate.py", "impression.py"]
 
 nb = nbf.v4.new_notebook()
 cells: list = []
@@ -83,6 +83,8 @@ code(r"""
 import os, sys, json, re, time, statistics
 from pathlib import Path
 
+import pandas as pd          # every data cell below relies on this
+
 HERE = Path.cwd()
 DATA = HERE / "data" if (HERE / "data").exists() else HERE
 
@@ -112,12 +114,22 @@ section rewrites them onto disk and imports them.
 
 | module | role |
 |---|---|
+| `__init__.py` | package marker (required, or `import natoe` is a namespace package) |
 | `res_scorer.py` | local re-implementation of the RES metric |
 | `pipeline.py` | retriever, prompt, JSON patch, guard, renderer |
 | `config.py` | paths, provider table, defaults |
 | `evaluate.py` | dev split, scoring, error analysis |
 | `impression.py` | IMPRESSION strategy (35% of the metric) |
 """)
+
+code(r'''
+# IPython's %%writefile does NOT create parent directories, and on Kaggle
+# there is no src/ tree yet. Create it first or the next cells die with
+# FileNotFoundError.
+import os
+os.makedirs("src/natoe", exist_ok=True)
+print("wrote to:", os.path.abspath("src/natoe"))
+''')
 
 for name in MODULES:
     writefile(f"src/natoe/{name}", (PKG / name).read_text())
@@ -145,8 +157,8 @@ from natoe.pipeline import (LLM, MockLLM, Retriever, build_shots,
 from natoe.evaluate import (dev_split, build_retriever, baselines,
                             score_predictions, run_and_score, per_case,
                             field_loss_table, diagnosis_table)
-print("natoe", natoe.__version__, "| provider:", C.provider_name(),
-      "| model:", C.model_name())
+print("natoe", getattr(natoe, "__version__", "?"), "| provider:",
+      C.provider_name(), "| model:", C.model_name())
 """)
 
 # ------------------------------------------------------------------ 3. data
@@ -154,18 +166,26 @@ md(r"""
 ## 3. The data
 """)
 
-code(r"""
-TRAIN = pd.read_csv(C.TRAIN_CSV)
-TEST  = pd.read_csv(C.TEST_CSV)
-SAMPLE = pd.read_csv(C.SAMPLE_SUBMISSION_CSV)
-
-print("train", TRAIN.shape, "| test", TEST.shape, "| sample", SAMPLE.shape)
-print("train cols:", list(TRAIN.columns))
-print("test  cols:", list(TEST.columns))
-display(TRAIN["modality"].value_counts().to_frame("train")
-        .join(TEST["modality"].value_counts().to_frame("test"))
-        .fillna(0).astype(int))
-""")
+code(r'''
+# The competition CSVs are not in the repository. On Kaggle attach the
+# competition to this notebook, or upload them to a dataset and point
+# natoe.config.DATA_DIR at it. Without them the data-dependent cells below
+# are skipped rather than crashing the run.
+HAVE_DATA = C.TRAIN_CSV.exists() and C.TEST_CSV.exists()
+print("data available:", HAVE_DATA, "|", C.DATA_DIR)
+if not HAVE_DATA:
+    print("SKIPPING: expected", C.TRAIN_CSV, "and", C.TEST_CSV)
+else:
+    TRAIN = pd.read_csv(C.TRAIN_CSV)
+    TEST  = pd.read_csv(C.TEST_CSV)
+    SAMPLE = pd.read_csv(C.SAMPLE_SUBMISSION_CSV)
+    print("train", TRAIN.shape, "| test", TEST.shape, "| sample", SAMPLE.shape)
+    print("train cols:", list(TRAIN.columns))
+    print("test  cols:", list(TEST.columns))
+    display(TRAIN["modality"].value_counts().to_frame("train")
+            .join(TEST["modality"].value_counts().to_frame("test"))
+            .fillna(0).astype(int))
+''')
 
 md(r"""
 ### One worked example, so the shape of the data is concrete
@@ -375,7 +395,12 @@ Similarity is TF-IDF cosine over normalised tokens, implemented in
 """)
 
 code(r"""
-DEV, POOL = dev_split(TRAIN, n_dev=C.DEFAULT_DEV_SIZE)
+# Sized as a demonstration, not a benchmark: the TF-IDF retriever and the
+# offline MockLLM are pure Python and slow down over a few hundred rows. The
+# full 300-row evaluation behind the numbers quoted in the README is
+#   python scripts/run_dev.py --n-dev 300 --n-shots 3 --guard numbers
+NB_DEV_N = int(os.getenv("NATOE_NB_DEV", "60"))
+DEV, POOL = dev_split(TRAIN, n_dev=NB_DEV_N)
 print(f"dev {len(DEV)} rows (scored) | few-shot pool {len(POOL)} rows")
 print("exemplars never include the row being scored, so the dev number is honest.")
 
@@ -431,19 +456,20 @@ else:
     print("Add GROQ_API_KEY or OPENROUTER_API_KEY to .env and re-run.")
 """)
 
-code(r"""
+code(r'''
 # one row, end to end, so the contract is visible
-_row = dict(DEV.iloc[1])
-_case = {"template_content": _row.template_content, "dictation": _row.dictation,
-         "modality": _row.modality, "body_part": _row.body_part,
-         "study_description": _row.study_description,
-         "patient_age_band": _row.patient_age_band,
-         "patient_sex": _row.patient_sex}
+_row = DEV.iloc[1].to_dict()          # .to_dict(), not dict(): attribute access
+_case = {"template_content": _row["template_content"],
+         "dictation": _row["dictation"],
+         "modality": _row["modality"], "body_part": _row["body_part"],
+         "study_description": _row["study_description"],
+         "patient_age_band": _row["patient_age_band"],
+         "patient_sex": _row["patient_sex"]}
 _raw = LLM_RUNNER.complete(build_user_prompt(_case, build_shots(RETRIEVER, POOL, _case, 2)))
 print("RAW MODEL OUTPUT (truncated):\n" + _raw[:600])
 print("\n--- RENDERED REPORT ---\n" + render(_case, guard(parse_json(_raw), _case, "numbers")))
-print("\n--- REFERENCE ---\n" + _row.report)
-""")
+print("\n--- REFERENCE ---\n" + _row["report"])
+''')
 
 # ----------------------------------------------------------------- 10. run
 md(r"""
@@ -531,24 +557,29 @@ routing mistakes, the fix belongs in the rules of the system prompt, not in a
 bigger model.
 """)
 
-code(r"""
+code(r'''
+# A compact sweep so the notebook stays a readable demonstration. The full
+# 300-row evaluation behind these numbers lives in
+#   python scripts/run_dev.py --n-dev 300 --n-shots 3 --guard numbers
 variants = []
-for n_shots in (0, 1, 3):
-    for level in ("numbers", "strict"):
-        _, res = run_and_score(LLM_RUNNER, DEV, RETRIEVER, POOL,
-                               n_shots=n_shots, guard_level=level,
-                               cache_path=C.CACHE_PATH, progress=False)
-        variants.append({"n_shots": n_shots, "guard": level,
-                         "RES": res["RES"], "F": res["F"], "I": res["I"],
-                         "s": round(res["seconds"])})
-        print(f"n_shots={n_shots} guard={level:8s} -> RES={res['RES']:.4f} "
-              f"F={res['F']:.4f} I={res['I']:.4f} ({res['seconds']:.0f}s)")
+SUBSET = DEV.head(60)
+for n_shots, level in ((0, "numbers"), (1, "numbers"), (3, "numbers"),
+                       (3, "strict")):
+    _, res = run_and_score(LLM_RUNNER, SUBSET, RETRIEVER, POOL,
+                           n_shots=n_shots, guard_level=level,
+                           cache_path=C.CACHE_PATH, progress=False)
+    variants.append({"n_shots": n_shots, "guard": level,
+                     "RES": res["RES"], "F": res["F"], "I": res["I"]})
+    print(f"n_shots={n_shots} guard={level:8s} -> RES={res['RES']:.4f} "
+          f"F={res['F']:.4f} I={res['I']:.4f}")
 
 VARIANTS = pd.DataFrame(variants).sort_values("RES")
 display(VARIANTS)
+print("\nExpected ordering: more shots help; guard level is near-neutral.")
+print("This is a 60-row subset, so only differences above ~0.02 mean anything.")
 BEST = VARIANTS.iloc[0]
 print(f"\nbest: n_shots={int(BEST.n_shots)} guard={BEST.guard}")
-""")
+''')
 
 # ---------------------------------------------------------------- 13. test
 md(r"""

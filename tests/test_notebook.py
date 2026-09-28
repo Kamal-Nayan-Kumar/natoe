@@ -13,7 +13,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 NB = ROOT / "notebooks" / "natoe_pipeline.ipynb"
-MODULES = ["res_scorer.py", "pipeline.py", "config.py", "evaluate.py"]
+MODULES = ["__init__.py", "res_scorer.py", "pipeline.py", "config.py",
+           "evaluate.py", "impression.py"]
 
 
 def load_nb():
@@ -64,6 +65,50 @@ def test_notebook_contains_no_api_keys():
         assert secret not in text, f"notebook appears to contain {secret!r}"
     # the key *names* may appear, but never an assignment with a value
     assert "GROQ_API_KEY = \"" not in text
+
+
+def test_notebook_builder_is_valid_python_and_runs():
+    """The builder is a big pile of triple-quoted cells; a mismatched quote
+    silently swallows the rest of the file. That happened twice by hand before
+    it was caught, so pin it down: the builder must parse, and must run
+    end-to-end (it is idempotent, so this just regenerates the notebook)."""
+    import ast
+    import subprocess
+    import sys
+
+    builder = ROOT / "scripts" / "build_notebook.py"
+    ast.parse(builder.read_text())                      # must parse
+
+    before = ([(c.cell_type, c.source) for c in load_nb().cells]
+              if NB.exists() else None)
+    proc = subprocess.run([sys.executable, str(builder)], cwd=ROOT,
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, f"builder failed:\n{proc.stderr[-2000:]}"
+    assert NB.exists()
+    if before is not None:
+        # nbformat regenerates random cell ids, so compare content, not bytes
+        after = [(c.cell_type, c.source) for c in load_nb().cells]
+        assert after == before, "builder is not idempotent"
+
+
+@pytest.mark.skipif(not NB.exists(), reason="notebook not generated yet")
+def test_notebook_creates_the_package_directory():
+    """IPython's %%writefile does not mkdir -p, and Kaggle has no src/ tree.
+    Without this the first writefile cell dies with FileNotFoundError."""
+    cells = [c.source for c in load_nb().cells if c.cell_type == "code"]
+    first_write = next(i for i, c in enumerate(cells)
+                       if c.startswith("%%writefile"))
+    before = "\n".join(cells[:first_write])
+    assert "makedirs" in before, "no makedirs cell before the %%writefile cells"
+
+
+@pytest.mark.skipif(not NB.exists(), reason="notebook not generated yet")
+def test_notebook_writes_the_package_init():
+    """Without __init__.py `import natoe` is a namespace package and has no
+    __version__, which crashed the Kaggle run at cell 8."""
+    cells = [c.source for c in load_nb().cells if c.cell_type == "code"]
+    written = {c.split("\n", 1)[0] for c in cells if c.startswith("%%writefile")}
+    assert "%%writefile src/natoe/__init__.py" in written
 
 
 def test_env_example_lists_both_providers():

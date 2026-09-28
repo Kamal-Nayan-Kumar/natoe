@@ -1,0 +1,15 @@
+{
+  "id": "kamalnayan90/natoe-radiology-edit",
+  "title": "Natoe Radiology Edit",
+  "code_file": "notebook.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "keywords": [],
+  "dataset_sources": [
+    "kamalnayan90/natoe-radiology-edit-data"
+  ],
+  "competition_sources": []
+}

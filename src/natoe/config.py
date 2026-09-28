@@ -22,14 +22,34 @@ except ImportError:                                    # pragma: no cover
 # --------------------------------------------------------------------- paths
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.getenv("NATOE_DATA_DIR") or (ROOT / "data"))
 NOTEBOOK_DIR = ROOT / "notebooks"
-OUTPUT_DIR = ROOT / "outputs"
-CACHE_PATH = ROOT / "outputs" / "llm_cache.json"
+OUTPUT_DIR = Path(os.getenv("NATOE_OUTPUT_DIR") or (ROOT / "outputs"))
+CACHE_PATH = OUTPUT_DIR / "llm_cache.json"
 
 TRAIN_CSV = DATA_DIR / "train.csv"
 TEST_CSV = DATA_DIR / "test.csv"
 SAMPLE_SUBMISSION_CSV = DATA_DIR / "sample_submission.csv"
+
+# On Kaggle the package is rewritten under /kaggle/working/src by the notebook's
+# %%writefile cells, and the CSVs arrive as a dataset mounted elsewhere. Look in
+# the usual mount points so the notebook runs unmodified.
+if not TRAIN_CSV.exists():
+    for _alt in (Path("/kaggle/working/data"), Path("/kaggle/working"),
+                 Path("/kaggle/input")):
+        if (_alt / "train.csv").exists():
+            DATA_DIR = _alt
+            TRAIN_CSV = _alt / "train.csv"
+            TEST_CSV = _alt / "test.csv"
+            SAMPLE_SUBMISSION_CSV = _alt / "sample_submission.csv"
+            break
+    else:
+        for _d in sorted(Path("/kaggle/input").glob("*/train.csv")) if \
+                Path("/kaggle/input").exists() else []:
+            DATA_DIR = _d.parent
+            TRAIN_CSV, TEST_CSV = _d, _d.parent / "test.csv"
+            SAMPLE_SUBMISSION_CSV = _d.parent / "sample_submission.csv"
+            break
 
 INPUT_COLUMNS = [
     "case_id", "modality", "body_part", "study_description",
