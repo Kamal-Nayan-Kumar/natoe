@@ -29,6 +29,9 @@ results/*
 !results/
 !results/*.json
 
+# generated from SOLUTION_DETAILS.md by scripts/md_to_docx.py — rebuild, don't commit
+*.docx
+
 # --- data: the CSVs are competition data, restore with scripts/fetch_data.sh ---
 data/*.csv
 
