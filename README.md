@@ -221,6 +221,7 @@ scripts/
   analysis/          one-off research scripts
   fetch_data.sh      restore data/ from Kaggle
 notebooks/       natoe_pipeline.ipynb
+results/         committed dev-split scores (see RESULTS.md)
 outputs/         llm_cache.json, dev_results.json, submission.csv (gitignored)
 ```
 
@@ -282,6 +283,12 @@ Responses are cached to `outputs/llm_cache.json`, keyed by
 free — only genuinely new prompts cost an API call. Failures are never cached.
 
 ---
+
+## Measured results
+
+Every dev-split score behind the numbers quoted above is committed as raw JSON
+in `results/`, with the caveats (split sizes, cache replays, where the local
+scorer disagrees with the private one) written up in [RESULTS.md](RESULTS.md).
 
 ## Notes and limitations
 

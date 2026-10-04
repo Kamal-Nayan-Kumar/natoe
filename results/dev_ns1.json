@@ -1,0 +1,20 @@
+{
+  "provider": "groq",
+  "model": "openai/gpt-oss-120b",
+  "n_dev": 40,
+  "variants": [
+    {
+      "n_shots": 1,
+      "guard": "numbers",
+      "RES": 0.411367304379913,
+      "F": 0.35442695796792567,
+      "I": 0.5171136620021751,
+      "seconds": 1065.3
+    }
+  ],
+  "best": {
+    "RES": 0.411367304379913,
+    "n_shots": 1,
+    "guard": "numbers"
+  }
+}

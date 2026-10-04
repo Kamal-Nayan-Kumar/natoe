@@ -1,0 +1,20 @@
+{
+  "provider": "opencode",
+  "model": "space-bunny-free",
+  "n_dev": 60,
+  "variants": [
+    {
+      "n_shots": 0,
+      "guard": "numbers",
+      "RES": 0.37208846367840975,
+      "F": 0.33316943227974527,
+      "I": 0.444366664847358,
+      "seconds": 0.2
+    }
+  ],
+  "best": {
+    "RES": 0.37208846367840975,
+    "n_shots": 0,
+    "guard": "numbers"
+  }
+}

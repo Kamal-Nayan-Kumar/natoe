@@ -24,6 +24,11 @@ outputs/*
 !outputs/.gitkeep
 *.log
 
+# results/ holds the committed dev-split score files; llm_cache.json stays out
+results/*
+!results/
+!results/*.json
+
 # --- data: the CSVs are competition data, restore with scripts/fetch_data.sh ---
 data/*.csv
 
