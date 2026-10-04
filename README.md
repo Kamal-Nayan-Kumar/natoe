@@ -60,39 +60,41 @@ The local scorer is a re-implementation, so it was checked against real Kaggle
 submissions. Its accuracy turned out to depend sharply on *what* is being
 scored.
 
-| submission | local RES | Kaggle public | Kaggle private |
-|---|---|---|---|
-| LLM JSON-patch pipeline | 0.4026 | 0.42523 | **0.40149** |
-| rule-based fallback, ≤2-token filter | 0.5695 | 0.62616 | 0.64567 |
-| rule-based fallback, finding-filtered IMPRESSION | **0.5632** | 0.63136 | 0.65007 |
-| rule-based fallback, no filter | (worse) | 0.64123 | 0.64932 |
+| # | submission | local RES | Kaggle public | Kaggle private |
+|---|---|---|---|---|
+| — | rule-based fallback, no sentence filter | (worse) | 0.64123 | 0.64932 |
+| — | rule-based fallback, finding-filtered IMPRESSION | **0.5632** | 0.63136 | 0.65007 |
+| — | rule-based fallback, ≤2-token filter | 0.5695 | 0.62616 | 0.64567 |
+| 5 | LLM JSON-patch pipeline, 0-shot | 0.4026 | 0.42523 | 0.40149 |
+| 6 | + append template IMPRESSION closer | 0.3721 | 0.42283 | 0.39879 |
+| 7 | **+ 3-shot, prompt asymmetry, robust JSON parse** | **0.2842** | **0.36066** | **0.33012** |
 
-Two clear conclusions:
+Three clear conclusions:
 
-1. **For LLM-generated content the local scorer is accurate to ~0.001**
-   (0.4026 local vs 0.40149 private). It can be trusted for iteration.
-2. **For the hand-written fallback it was off by ~0.08 and mis-ranked the
-   variants.** The disagreement was concentrated entirely in the IMPRESSION
-   section, which the fallback fills with raw dictation text. So the local
-   IMPRESSION handling diverges from the real scorer when the text is
-   degenerate; it agrees when the text is well-formed.
+1. **The local scorer tracks the real one on FINDINGS-dominated submissions, but
+   is consistently optimistic, and the bias grows as the pipeline improves:**
+   +0.000 on #5, +0.027 on #6, **+0.046** on #7.
+2. **It over-credits IMPRESSION changes by ~10×** — 0.031 rated locally versus
+   0.0027 actually delivered.
+3. For the hand-written fallback it was off by ~0.08 and **mis-ranked three
+   variants in the wrong order**. The disagreement was concentrated entirely in
+   the IMPRESSION section, which the fallback fills with raw dictation text.
 
-Practical rule: iterate locally on FINDINGS-heavy changes, and confirm anything
-IMPRESSION-shaped with a real submission.
-
-The full LLM pipeline measured **0.4366** local on a 40-row dev split
-(template-unedited baseline 0.6193, oracle 0.0), which would be roughly 0.49 on
-the leaderboard — but the free API tiers were throttled before it could be run
-over all 132 test rows. See *Status* below.
+Practical rule: **iterate locally, submit to confirm, and add ~0.05 when
+interpreting a local number.** Local scores are reliable for *ranking* changes —
+every change that improved the local score did improve the leaderboard — but
+never quote one as a predicted score.
 
 ## Status
 
 | | |
 |---|---|
-| Best leaderboard score | **0.42523** public / **0.40149** private (LLM pipeline) |
-| Local dev RES | 0.4026 (60-row dev split, agrees with private to 0.001) |
-| Previous best | 0.62616 public (rule-based fallback, no LLM) |
+| Best leaderboard score | **0.36066** public / **0.33012** private (submission 7) |
+| Improvement | 0.64567 → 0.33012 private vs the no-LLM baseline, a **49% reduction** |
+| Local dev RES | 0.2842 (60-row dev split; optimistic by ~0.046) |
+| Same config, 300-row dev split | 0.3097 — the more trustworthy figure |
 | Model | `space-bunny-free` on OpenCode Zen, ~0.43 rows/s, no rate limiting |
+| Shipped config | 3 retrieved few-shot exemplars, temperature 0, `guard=numbers` |
 
 ### Providers
 
@@ -105,8 +107,17 @@ over all 132 test rows. See *Status* below.
 ### Reproducing the submission
 
 ```bash
-python scripts/predict_test.py --provider opencode --n-shots 0 --guard numbers
+python scripts/predict_test.py --provider opencode --model space-bunny-free \
+    --n-shots 3 --guard numbers
 ```
+
+> **`--n-shots 3` is required.** The script's built-in default is `0`, which does
+> **not** reproduce the submitted CSV — the shipped submission used 3 retrieved
+> few-shot exemplars, and 3-shot is what took the private score from 0.40149 to
+> 0.33012. Pass it explicitly.
+
+Full step-by-step, including data setup, is in
+[SOLUTION_DETAILS.md](SOLUTION_DETAILS.md).
 
 ## Setup
 
@@ -127,37 +138,51 @@ cp .env.example .env     # then fill in
 
 | provider | key | default model | notes |
 |---|---|---|---|
-| Groq | `GROQ_API_KEY` | `openai/gpt-oss-120b` | strongest, but **8000 prompt tokens/min** — a 3-shot prompt (~4200 tok) means ~2 calls/min |
-| OpenRouter | `OPENROUTER_API_KEY` | `nvidia/nemotron-3-super-120b:free` | free, ~0.6 s/call, honours JSON mode; gemma-4-31b:free frequently 429s |
+| **opencode** (default) | `OPENCODE_API_KEY` | `space-bunny-free` | **the provider the shipped submission used.** No rate limiting, ~0.43 rows/s. Zen ids carry no `opencode/` prefix on the wire |
+| groq | `GROQ_API_KEY` | `openai/gpt-oss-120b` | **8000 prompt tokens/min** — a 3-shot prompt (~4200 tok) means ~2 calls/min |
+| openrouter | `OPENROUTER_API_KEY` | `nvidia/nemotron-3-super-120b-a12b:free` | ~0.6 s/call, honours JSON mode; daily `:free` cap |
 
-Both speak the OpenAI chat API, so one client covers both. Switch with
-`LLM_PROVIDER=openrouter` (or `--provider openrouter`).
+All three speak the OpenAI chat API, so one client covers them. Switch with
+`LLM_PROVIDER` (or `--provider`).
+
+To reproduce the submission you need **`OPENCODE_API_KEY`** (an `oc_sk_...` key
+from your OpenCode Zen account). Note `.env.example` still ships the older
+`LLM_PROVIDER=groq` default — set `LLM_PROVIDER=opencode` yourself.
 
 Optional knobs: `LLM_MODEL`, `REASONING_EFFORT` (default `low` — this task
-does not need long chains of thought, and it is a 4× speed difference).
+does not need long chains of thought, and it is a 4× speed difference. It is
+also a correctness fix: reasoning models otherwise spend the whole output budget
+on chain-of-thought and return no `content`.)
 
-> **Rate limits are the real constraint, not model quality.** Both free tiers
-> are rationed, and the *shape* of the limit matters:
+> **Rate limits, not model quality, decided the provider.** All three are free
+> tiers and rationed differently, and the *shape* of the limit is what matters:
 >
 > | limit | value | consequence |
 > |---|---|---|
+> | **opencode Zen** | **none observed** | ~0.43 rows/s, no throttling — this is why the submission used it |
 > | Groq requests | 1000 / hour | comfortable |
 > | Groq **prompt tokens** | **8000 / minute** | ~7 calls/min at 0-shot, only ~2 at 3-shot — tokens, not calls, are the budget |
 > | OpenRouter `:free` | **free-model requests per day** | a hard daily cap; adding 10 credits raises it to 1000/day |
 >
 > Practical consequences, all of which are in the code:
-> * `n_shots` is a *token* budget decision. A 3-shot prompt is ~4200 tokens.
->   At 1 shot, 6 of 40 dev rows were rate-limited and silently fell back to
->   the template, which is worse than not prompting at all. **Fewer shots
->   won**, so the default is `n_shots=0`.
+> * **`n_shots` is a token-budget decision, not a quality one — and which way it
+>   cuts depends on the provider.** On Groq, a 3-shot prompt is ~4200 tokens and
+>   at 1 shot 6 of 40 dev rows were rate-limited into a silent template
+>   fallback, so fewer shots won *there*. On an unlimited provider that
+>   argument disappears and the exemplars help: on `space-bunny-free`, 3-shot
+>   scored **0.284** against 0-shot's **0.403** on the same 60-row split. The
+>   shipped submission is 3-shot. The `n_shots=0` default in `config.py` is
+>   still the Groq-era value and should be passed explicitly.
 > * `REASONING_EFFORT=low` by default — reasoning models otherwise spend the
 >   whole output budget on chain-of-thought and return no `content`.
 > * `workers=2` plus a `retries=2` pass over the rows that failed. A 429 storm
 >   silently drags the score back toward "template unedited", so `run_dataset`
 >   reports every row that exhausted its retries rather than swallowing it.
 > * `outputs/llm_cache.json` is keyed by
->   `(model, reasoning_effort, guard_level, n_shots, system_prompt, prompt)`,
->   so repeated experiments cost nothing. Failures are never cached.
+>   `(model, reasoning_effort, guard_level, n_shots, temperature, system_prompt,
+>   prompt)` — the system prompt *must* be in the key, or editing the prompt
+>   rules would silently reuse every stale response. Repeated experiments
+>   therefore cost nothing. Failures are never cached.
 
 ### Data
 
@@ -179,11 +204,15 @@ python scripts/run_dev.py --n-shots 3 --guard numbers
 python scripts/run_dev.py --variants
 
 # compare providers
-python scripts/run_dev.py --provider groq       --model openai/gpt-oss-120b
-python scripts/run_dev.py --provider openrouter --model google/gemma-4-31b-it:free
+python scripts/run_dev.py --provider opencode  --model space-bunny-free
+python scripts/run_dev.py --provider groq      --model openai/gpt-oss-120b
+python scripts/run_dev.py --provider openrouter --model nvidia/nemotron-3-super-120b-a12b:free
 
-# predict the test set -> outputs/submission.csv (validated before writing)
-python scripts/predict_test.py
+# predict the test set -> outputs/submission.csv (validated before writing).
+# --n-shots 3 is what the shipped submission used; the default of 0 does not
+# reproduce it.
+python scripts/predict_test.py --provider opencode --model space-bunny-free \
+    --n-shots 3 --guard numbers
 
 # regenerate the self-contained notebook
 python scripts/build_notebook.py
@@ -223,6 +252,7 @@ scripts/
 notebooks/       natoe_pipeline.ipynb
 results/         committed dev-split scores (see RESULTS.md)
 outputs/         llm_cache.json, dev_results.json, submission.csv (gitignored)
+SOLUTION_DETAILS.md  step-by-step reproduction, provider, packages, submission
 ```
 
 ---
@@ -279,8 +309,9 @@ FINDINGS content, or a field label absent from the template.
 ### Caching
 
 Responses are cached to `outputs/llm_cache.json`, keyed by
-`(model, guard_level, n_shots, prompt)`. Prompt iteration is therefore nearly
-free — only genuinely new prompts cost an API call. Failures are never cached.
+`(model, reasoning_effort, guard_level, n_shots, temperature, system_prompt,
+prompt)`. Prompt iteration is therefore nearly free — only genuinely new prompts
+cost an API call. Failures are never cached.
 
 ---
 
